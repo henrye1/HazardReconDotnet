@@ -117,3 +117,9 @@ iframe{width:100%;height:640px;border:1px solid var(--line);border-radius:10px;
 .btn.clear{padding:3px 9px;font-size:11px;color:var(--red)}
 #btn-add-path{margin:4px 0 0}
 .pathbox{width:100%;max-width:640px}
+
+.modelrow { display:flex; align-items:center; gap:10px; margin:10px 0; flex-wrap:wrap; }
+.modelrow label { font-weight:600; font-size:13px; }
+.modelrow select { padding:6px 8px; border:1px solid #cfd8e3; border-radius:6px; font-size:13px; background:#fff; }
+.modelrow select:disabled { background:#f0f2f5; color:#5b6b7f; }
+.modelrow .hint { margin:0; }

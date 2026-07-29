@@ -67,6 +67,41 @@ $("#btn-add-path").addEventListener("click", addPathRow);
   updateReady();
 })();
 
+/* ---------- step 2: model ---------- */
+function addModelOption(value, label) {
+  const o = document.createElement("option");
+  o.value = value;
+  o.textContent = label;
+  $("#model").appendChild(o);
+  return o;
+}
+
+function loadModels() {
+  const sel = $("#model");
+  const note = $("#model-note");
+  addModelOption("", "Skip AI analysis");
+  return fetch("/api/models")
+    .then(readJson)
+    .then(({ ok, j }) => {
+      if (!ok || !Array.isArray(j)) {
+        sel.disabled = true;
+        note.textContent = (j && j.error) || "Model list unavailable - runs will skip AI analysis.";
+        return;
+      }
+      j.forEach(m => addModelOption(m.id, m.friendlyName));
+      const saved = localStorage.getItem("hr_model") || "";
+      sel.value = j.some(m => m.id === saved) ? saved : "";
+      note.textContent = "Analysis adds roughly 25 seconds to a run.";
+    })
+    .catch(e => {
+      sel.disabled = true;
+      note.textContent = "Model list unavailable - " + e.message;
+    });
+}
+
+$("#model").addEventListener("change", () => localStorage.setItem("hr_model", $("#model").value));
+loadModels();
+
 function discover() {
   const paths = pathValues();
   const fd = new FormData();
@@ -159,7 +194,7 @@ function beginRun() {
 function startRun(hasRetried) {
   fetch("/api/run", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ run_id: RUN_ID })
+    body: JSON.stringify({ run_id: RUN_ID, model_id: $("#model").value || null })
   }).then(readJson)
     .then(({ ok, status, j }) => {
       if (status === 404 && !hasRetried && pathValues().length) {

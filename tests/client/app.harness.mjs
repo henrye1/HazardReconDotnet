@@ -191,6 +191,53 @@ async function scenarioE() {
   check("polling stopped", h.timers.armed === null);
 }
 
-for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE]) { await s(); console.log(""); }
+/* ---------------- F: model selection ---------------- */
+async function scenarioF() {
+  console.log("F) model picker populates and is sent with the run");
+  let runBody = null;
+  const models = [
+    { id: "72e110c8", provider: 1, friendlyName: "Google Gemini 2.5 Pro", modelName: "gemini-2.5-pro" },
+    { id: "5f3283d8", provider: 0, friendlyName: "Azure OpenAI GPT-4o", modelName: "gpt4o" },
+  ];
+  const h = boot((url, opts) => {
+    if (url === "/api/models") return Promise.resolve(jsonRes(200, models));
+    if (url === "/api/run") { runBody = JSON.parse(opts.body); return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" })); }
+    if (url.startsWith("/api/job/")) return Promise.resolve(jsonRes(200, { status: "running", log: [] }));
+    return Promise.resolve(jsonRes(200, {}));
+  });
+
+  await tick(); await tick(); await tick();
+  const sel = h.$get("#model");
+  check("skip option is present and first", sel.children[0]?.value === "");
+  check("both models added as options", sel.children.length === 3, `got ${sel.children.length}`);
+
+  sel.value = "5f3283d8";
+  h.ctx.beginRun();
+  await tick(); await tick();
+  check("model_id sent with the run", runBody?.model_id === "5f3283d8", `sent ${JSON.stringify(runBody)}`);
+}
+
+/* ---------------- G: model list unavailable ---------------- */
+async function scenarioG() {
+  console.log("G) /api/models fails");
+  let runBody = null;
+  const h = boot((url, opts) => {
+    if (url === "/api/models") return Promise.resolve(jsonRes(503, { error: "gateway not configured" }));
+    if (url === "/api/run") { runBody = JSON.parse(opts.body); return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" })); }
+    if (url.startsWith("/api/job/")) return Promise.resolve(jsonRes(200, { status: "running", log: [] }));
+    return Promise.resolve(jsonRes(200, {}));
+  });
+
+  await tick(); await tick(); await tick();
+  check("select disabled", h.$get("#model").disabled === true);
+  check("reason shown", /not configured/.test(h.$get("#model-note").textContent || ""),
+    `note='${h.$get("#model-note").textContent}'`);
+
+  h.ctx.beginRun();
+  await tick(); await tick();
+  check("run still starts, without a model", runBody !== null && !runBody.model_id);
+}
+
+for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
