@@ -74,9 +74,14 @@ const mkRes = (status, body) => ({
 const jsonRes = (status, obj) => mkRes(status, JSON.stringify(obj));
 const rawRes = (status, body) => mkRes(status, body);
 
-function boot(fetchImpl) {
+// initialStorage optionally seeds localStorage before app.js runs, so a
+// scenario can assert on restored state (e.g. a remembered model id) without
+// touching the localStorage stub itself. Defaults to none - existing callers
+// that pass only fetchImpl are unaffected.
+function boot(fetchImpl, initialStorage = {}) {
   const h = newCtx();
   h.ctx.fetch = fetchImpl;
+  Object.assign(h.ctx.localStorage._d, initialStorage);
   vm.runInContext(SRC, h.ctx);
   // give the module a RUN_ID the way discovery does
   h.ctx.showInventory({ run_id: "RID1", inventory: { root: "r", sets: [{ key: "K", label: "L" }] }, problems: [] });
@@ -238,6 +243,31 @@ async function scenarioG() {
   check("run still starts, without a model", runBody !== null && !runBody.model_id);
 }
 
-for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG]) { await s(); console.log(""); }
+/* ---------------- H: remembered model - restore or fall back ---------------- */
+async function scenarioH() {
+  console.log("H) remembered model id is restored if valid, or falls back to Skip if stale");
+  const models = [
+    { id: "72e110c8", provider: 1, friendlyName: "Google Gemini 2.5 Pro", modelName: "gemini-2.5-pro" },
+    { id: "5f3283d8", provider: 0, friendlyName: "Azure OpenAI GPT-4o", modelName: "gpt4o" },
+  ];
+  const fetchImpl = (url) => {
+    if (url === "/api/models") return Promise.resolve(jsonRes(200, models));
+    return Promise.resolve(jsonRes(200, {}));
+  };
+
+  // half 1: a stale id (not in the current list) must fall back to Skip ("")
+  const stale = boot(fetchImpl, { hr_model: "does-not-exist" });
+  await tick(); await tick(); await tick();
+  check("stale remembered id falls back to Skip", stale.$get("#model").value === "",
+    `value='${stale.$get("#model").value}'`);
+
+  // half 2: an id still present in the list must be restored, not discarded
+  const present = boot(fetchImpl, { hr_model: "5f3283d8" });
+  await tick(); await tick(); await tick();
+  check("still-present remembered id is restored", present.$get("#model").value === "5f3283d8",
+    `value='${present.$get("#model").value}'`);
+}
+
+for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
