@@ -114,7 +114,7 @@ public class DashboardRenderer
         {
             sb.AppendLine("    <div class='ai-analysis'>");
             sb.AppendLine("      <h2 style='color:var(--purple)'>AI Analysis (generated)</h2>");
-            sb.AppendLine("      <div>" + SimpleMarkdownToHtml(analysisMd) + "</div>");
+            sb.AppendLine("      <div>" + MarkdownHelper.ToHtml(analysisMd) + "</div>");
             sb.AppendLine("    </div>");
         }
 
@@ -510,21 +510,5 @@ public class DashboardRenderer
             for (int j = 0; j < 6; j++) rows[i][j] = m[i, j];
         }
         return rows;
-    }
-
-    private static string SimpleMarkdownToHtml(string md)
-    {
-        if (string.IsNullOrWhiteSpace(md)) return string.Empty;
-
-        StringBuilder sb = new();
-        foreach (string line in md.Split('\n'))
-        {
-            string t = line.Trim();
-            if (t.StartsWith("## ")) sb.AppendLine($"<h3>{WebUtility.HtmlEncode(t[3..])}</h3>");
-            else if (t.StartsWith("# ")) sb.AppendLine($"<h2>{WebUtility.HtmlEncode(t[2..])}</h2>");
-            else if (t.StartsWith("- ") || t.StartsWith("* ")) sb.AppendLine($"<li>{WebUtility.HtmlEncode(t[2..])}</li>");
-            else if (!string.IsNullOrEmpty(t)) sb.AppendLine($"<p>{WebUtility.HtmlEncode(t)}</p>");
-        }
-        return sb.ToString();
     }
 }

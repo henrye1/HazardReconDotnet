@@ -1,13 +1,11 @@
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
+using HazardRecon.Core.Llm;
 using HazardRecon.Core.Models;
 
 namespace HazardRecon.Core.Services;
 
 public class AiAnalysisService
 {
-    private const string Model = "claude-opus-5";
     private const string SystemPrompt = @"You are a senior credit-risk analyst at Anchor Point Risk writing
 for a bank's finance and audit teams. You receive aggregate results of an
 IFRS 9 hazard-rate reconciliation as JSON. Write a rigorous, plain-language
@@ -27,6 +25,15 @@ more than one set is present, compare them. Flag anomalies (zero IFRS9
 overlap, missing files, empty windows). Never invent numbers that are not
 in the input. Use headings, short paragraphs and bullet lists only - no
 Markdown tables. Keep it under 700 words.";
+
+    private readonly ILlmClient _client;
+    private readonly string _modelId;
+
+    public AiAnalysisService(ILlmClient client, string modelId)
+    {
+        _client = client;
+        _modelId = modelId;
+    }
 
     public static Dictionary<string, object> BuildAnalysisPayload(Dictionary<string, SingleSetResult> results)
     {
@@ -97,68 +104,34 @@ Markdown tables. Keep it under 700 words.";
         return new Dictionary<string, object> { ["sets"] = sets };
     }
 
-    public static string? GenerateAnalysis(Dictionary<string, object> payload, Action<string, string>? log = null)
+    /// <summary>
+    /// Blocks on the async client because the engine is synchronous and already runs
+    /// on a background thread. Returns null on any failure — a gateway outage must
+    /// never fail a reconciliation.
+    /// </summary>
+    public string? GenerateAnalysis(Dictionary<string, object> payload, Action<string, string>? log = null)
     {
-        string? apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        if (string.IsNullOrEmpty(apiKey))
-        {
-            log?.Invoke("ANTHROPIC_API_KEY not set - skipping AI analysis", "warn");
-            return null;
-        }
-
         try
         {
-            using var client = new HttpClient();
-            client.DefaultRequestHeaders.Add("x-api-key", apiKey);
-            client.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-
             string jsonPayload = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
-            string userPrompt = $"Aggregate reconciliation results:\n\n{jsonPayload}";
 
-            var requestBody = new
+            List<LlmMessage> messages = new()
             {
-                model = Model,
-                max_tokens = 16000,
-                system = SystemPrompt,
-                messages = new[]
-                {
-                    new { role = "user", content = userPrompt }
-                }
+                new LlmMessage("system", SystemPrompt),
+                new LlmMessage("user", $"Aggregate reconciliation results:\n\n{jsonPayload}")
             };
 
-            string bodyText = JsonSerializer.Serialize(requestBody);
-            using var content = new StringContent(bodyText, Encoding.UTF8, "application/json");
+            LlmChatResult res = _client.ChatAsync(_modelId, messages).GetAwaiter().GetResult();
+            string result = (res.Content ?? string.Empty).Trim();
 
-            HttpResponseMessage response = client.PostAsync("https://api.anthropic.com/v1/messages", content).GetAwaiter().GetResult();
-            string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-
-            if (!response.IsSuccessStatusCode)
+            if (string.IsNullOrEmpty(result))
             {
-                log?.Invoke($"AI analysis call failed: {response.StatusCode} - {responseText}", "warn");
+                log?.Invoke("AI analysis returned no content", "warn");
                 return null;
             }
 
-            using JsonDocument doc = JsonDocument.Parse(responseText);
-            if (doc.RootElement.TryGetProperty("content", out JsonElement contentArr) && contentArr.ValueKind == JsonValueKind.Array)
-            {
-                StringBuilder textSb = new();
-                foreach (JsonElement block in contentArr.EnumerateArray())
-                {
-                    if (block.TryGetProperty("type", out JsonElement t) && t.GetString() == "text" &&
-                        block.TryGetProperty("text", out JsonElement txt))
-                    {
-                        textSb.Append(txt.GetString());
-                    }
-                }
-                string result = textSb.ToString().Trim();
-                if (!string.IsNullOrEmpty(result))
-                {
-                    log?.Invoke("AI analysis generated", "ok");
-                    return result;
-                }
-            }
-
-            return null;
+            log?.Invoke($"AI analysis generated ({res.OutputTokens:N0} output tokens)", "ok");
+            return result;
         }
         catch (Exception ex)
         {

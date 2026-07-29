@@ -159,7 +159,7 @@ public class ReconciliationEngine
         return (records, summary);
     }
 
-    public ReconciliationRunResult Run(object root, string outdir = "output", Action<string, string>? logger = null, bool analyze = false)
+    public ReconciliationRunResult Run(object root, string outdir = "output", Action<string, string>? logger = null, bool analyze = false, AiAnalysisService? analyst = null)
     {
         Directory.CreateDirectory(outdir);
         Action<string, string> log = (msg, kind) =>
@@ -303,9 +303,16 @@ public class ReconciliationEngine
         string? analysisMd = null;
         if (analyze)
         {
-            log("Generating AI analysis", "head");
-            var payload = AiAnalysisService.BuildAnalysisPayload(results);
-            analysisMd = AiAnalysisService.GenerateAnalysis(payload, log);
+            if (analyst == null)
+            {
+                log("no model selected - skipping AI analysis", "warn");
+            }
+            else
+            {
+                log("Generating AI analysis", "head");
+                var payload = AiAnalysisService.BuildAnalysisPayload(results);
+                analysisMd = analyst.GenerateAnalysis(payload, log);
+            }
         }
 
         string html = DashboardRenderer.RenderDashboardAndSave(outdir, results, analysisMd, log);

@@ -135,7 +135,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
         try
         {
             var engine = new ReconciliationEngine();
-            ReconciliationRunResult outResult = engine.Run(capturedJob.Roots, capturedJob.Outdir, logger: Logger, analyze: true);
+            ReconciliationRunResult outResult = engine.Run(capturedJob.Roots, capturedJob.Outdir, logger: Logger, analyze: false);
 
             var setSummaries = outResult.Results.Select(kv => new
             {

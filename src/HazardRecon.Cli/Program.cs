@@ -48,7 +48,7 @@ class Program
         try
         {
             var engine = new ReconciliationEngine();
-            ReconciliationRunResult result = engine.Run(roots, outdir, analyze: !noAnalysis);
+            ReconciliationRunResult result = engine.Run(roots, outdir, analyze: false);
 
             Console.WriteLine($"\nWorkbook : {Path.GetFullPath(Path.Combine(outdir, result.Workbook))}");
             Console.WriteLine($"Dashboard: {Path.GetFullPath(Path.Combine(outdir, result.Dashboard))}");
