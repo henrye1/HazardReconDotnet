@@ -215,7 +215,8 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     if (string.IsNullOrEmpty(message))
         return Results.BadRequest(new { error = "Please enter a question." });
 
-    var chatRes = ChatService.ProcessQuestion(message, new Dictionary<string, object>());
+    ChatService chatService = new(null, null);
+    var chatRes = chatService.ProcessQuestion(message, new Dictionary<string, object>());
     if (chatRes.IsError)
         return Results.Json(new { error = chatRes.ErrorMessage }, statusCode: 503);
 

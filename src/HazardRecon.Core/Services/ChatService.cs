@@ -1,29 +1,32 @@
-using System.Net;
-using System.Text.RegularExpressions;
+using System.Text.Json;
+using HazardRecon.Core.Helpers;
+using HazardRecon.Core.Llm;
 
 namespace HazardRecon.Core.Services;
 
+/// <summary>
+/// "Ask about this run". Only the run's aggregate figures are sent to the model —
+/// no account-level rows leave this machine, which is why no account masking is
+/// needed on this path. The trade-off is that the model can answer about totals and
+/// rates but not about individual accounts.
+/// </summary>
 public class ChatService
 {
-    private static readonly Regex AccountRegex = new(@"\b[A-Za-z0-9_-]{5,30}\b", RegexOptions.Compiled);
+    private const string SystemPrompt = @"You are a credit-risk analyst answering questions about one
+IFRS 9 hazard-rate reconciliation run. You are given the run's aggregate results as
+JSON, then a question. Answer only from those figures. Report numbers exactly as
+given (thousands separators; rand amounts as R1,234,567.89). If the figures do not
+contain the answer, say so plainly and say what would. You have aggregates only, not
+account-level data, so you cannot answer questions about individual accounts. Keep
+the answer short — a few sentences or a short bullet list. Markdown, no tables.";
 
-    public static string MaskValue(string input)
+    private readonly ILlmClient? _client;
+    private readonly string? _modelId;
+
+    public ChatService(ILlmClient? client, string? modelId)
     {
-        if (string.IsNullOrEmpty(input)) return input;
-        string s = input.Trim();
-        if (s.Length <= 6) return "***";
-        return $"{s[..3]}****{s[^3..]}";
-    }
-
-    public static string MaskAccountsInText(string text, HashSet<string> knownAccounts)
-    {
-        if (knownAccounts.Count == 0 || string.IsNullOrEmpty(text)) return text;
-
-        return AccountRegex.Replace(text, match =>
-        {
-            string val = match.Value;
-            return knownAccounts.Contains(val) ? MaskValue(val) : val;
-        });
+        _client = client;
+        _modelId = modelId;
     }
 
     public class ChatResponse
@@ -34,25 +37,41 @@ public class ChatService
         public string? ErrorMessage { get; set; }
     }
 
-    public static ChatResponse ProcessQuestion(string userQuestion, Dictionary<string, object> runResults)
+    public ChatResponse ProcessQuestion(string userQuestion, Dictionary<string, object> runAggregates)
     {
-        string? apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        if (string.IsNullOrEmpty(apiKey))
+        if (string.IsNullOrEmpty(_modelId))
         {
-            return new ChatResponse
-            {
-                IsError = true,
-                ErrorMessage = "Chat is unavailable — ANTHROPIC_API_KEY environment variable is not set."
-            };
+            return new ChatResponse { IsError = true, ErrorMessage = "No model was selected for this run." };
         }
 
-        // Simple response formatter for run questions
-        string answer = $"I evaluated your question: '{userQuestion}'. Based on the reconciliation run, all summary metrics, migration matrices, and exceptions are available in the generated workbook and dashboard.";
-        
-        return new ChatResponse
+        if (_client == null)
         {
-            Reply = answer,
-            ReplyHtml = $"<p>{WebUtility.HtmlEncode(answer)}</p>"
-        };
+            return new ChatResponse { IsError = true, ErrorMessage = "Chat is unavailable - the LLM gateway is not configured." };
+        }
+
+        try
+        {
+            string json = JsonSerializer.Serialize(runAggregates, new JsonSerializerOptions { WriteIndented = true });
+
+            List<LlmMessage> messages = new()
+            {
+                new LlmMessage("system", SystemPrompt),
+                new LlmMessage("user", $"Reconciliation results:\n\n{json}\n\nQuestion: {userQuestion}")
+            };
+
+            LlmChatResult res = _client.ChatAsync(_modelId, messages).GetAwaiter().GetResult();
+            string reply = (res.Content ?? string.Empty).Trim();
+
+            if (reply.Length == 0)
+            {
+                return new ChatResponse { IsError = true, ErrorMessage = "The model returned an empty answer." };
+            }
+
+            return new ChatResponse { Reply = reply, ReplyHtml = MarkdownHelper.ToHtml(reply) };
+        }
+        catch (Exception ex)
+        {
+            return new ChatResponse { IsError = true, ErrorMessage = $"Chat is unavailable - {ex.Message}" };
+        }
     }
 }
