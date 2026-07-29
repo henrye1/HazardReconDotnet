@@ -10,4 +10,6 @@ internal class JobState
     public object? Result { get; set; }
     public string? Error { get; set; }
     public string Started { get; set; } = string.Empty;
+    public string? ModelId { get; set; }
+    public Dictionary<string, object>? AnalysisPayload { get; set; }
 }

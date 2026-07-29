@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using HazardRecon.Core.Helpers;
+using HazardRecon.Core.Llm;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
@@ -14,6 +15,15 @@ builder.WebHost.UseUrls($"http://{host}:{port}");
 var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+CyteLlmOptions llmOptions = new();
+builder.Configuration.GetSection("CyteLlm").Bind(llmOptions);
+CyteLlmClient? llm = llmOptions.IsConfigured ? new CyteLlmClient(llmOptions) : null;
+
+if (llm == null)
+{
+    Console.WriteLine(" ! CyteLlm:ClientId / CyteLlm:ClientSecret not set - AI analysis and chat are unavailable.");
+}
 
 string baseDir = AppContext.BaseDirectory;
 string runsDir = Path.Combine(baseDir, "runs");
@@ -115,6 +125,9 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
     if (job.Status == "running")
         return Results.Ok(new { run_id = rid, status = "running" });
 
+    string? modelId = doc.RootElement.TryGetProperty("model_id", out var modelProp) ? modelProp.GetString() : null;
+    job.ModelId = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
+
     job.Status = "running";
     job.Log.Clear();
     job.Error = null;
@@ -135,7 +148,16 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
         try
         {
             var engine = new ReconciliationEngine();
-            ReconciliationRunResult outResult = engine.Run(capturedJob.Roots, capturedJob.Outdir, logger: Logger, analyze: false);
+
+            AiAnalysisService? analyst = (llm != null && capturedJob.ModelId != null)
+                ? new AiAnalysisService(llm, capturedJob.ModelId)
+                : null;
+
+            ReconciliationRunResult outResult = engine.Run(
+                capturedJob.Roots, capturedJob.Outdir, logger: Logger,
+                analyze: analyst != null, analyst: analyst);
+
+            capturedJob.AnalysisPayload = AiAnalysisService.BuildAnalysisPayload(outResult.Results);
 
             var setSummaries = outResult.Results.Select(kv => new
             {
@@ -215,8 +237,8 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     if (string.IsNullOrEmpty(message))
         return Results.BadRequest(new { error = "Please enter a question." });
 
-    ChatService chatService = new(null, null);
-    var chatRes = chatService.ProcessQuestion(message, new Dictionary<string, object>());
+    ChatService chatService = new(llm, job.ModelId);
+    var chatRes = chatService.ProcessQuestion(message, job.AnalysisPayload ?? new Dictionary<string, object>());
     if (chatRes.IsError)
         return Results.Json(new { error = chatRes.ErrorMessage }, statusCode: 503);
 
@@ -243,6 +265,31 @@ app.MapGet("/runs/{rid}/output/{filename}", (string rid, string filename) =>
         return Results.File(filePath, contentType: "text/html; charset=utf-8");
 
     return Results.File(filePath, contentType: "application/octet-stream", fileDownloadName: filename);
+});
+
+// GET /api/models
+app.MapGet("/api/models", async () =>
+{
+    if (llm == null)
+    {
+        return Results.Json(new { error = "The LLM gateway is not configured (CyteLlm:ClientId / ClientSecret missing)." }, statusCode: 503);
+    }
+
+    try
+    {
+        IReadOnlyList<LlmModel> models = await llm.ListModelsAsync();
+        return Results.Ok(models.Select(m => new
+        {
+            id = m.Id,
+            provider = m.Provider,
+            friendlyName = m.FriendlyName,
+            modelName = m.ModelName
+        }));
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = $"Could not list models - {ex.Message}" }, statusCode: 503);
+    }
 });
 
 // GET /health
