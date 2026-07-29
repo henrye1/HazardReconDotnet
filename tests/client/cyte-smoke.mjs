@@ -12,10 +12,17 @@ const check = (name, cond, detail) => {
   else { console.log(`  FAIL  ${name}${detail ? " -> " + detail : ""}`); failures++; }
 };
 
-const res = await fetch(`${base}/api/models`);
-const text = await res.text();
-let body = null;
-try { body = JSON.parse(text); } catch (_) { }
+let res, text, body;
+try {
+  res = await fetch(`${base}/api/models`);
+  text = await res.text();
+  try { body = JSON.parse(text); } catch (_) { }
+} catch (err) {
+  console.error(`ERROR: could not reach ${base}/api/models`);
+  console.error(`  ${err.message}`);
+  console.error(`  Is the web app running? Start it with: cd src/HazardRecon.Web && dotnet run`);
+  process.exit(1);
+}
 
 console.log(`GET ${base}/api/models -> ${res.status}`);
 check("responded 200", res.status === 200, text.slice(0, 200));
