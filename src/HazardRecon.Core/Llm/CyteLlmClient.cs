@@ -56,8 +56,34 @@ public class CyteLlmClient : ILlmClient, IDisposable
         return models;
     }
 
-    public Task<LlmChatResult> ChatAsync(string modelId, IReadOnlyList<LlmMessage> messages, CancellationToken ct = default) =>
-        throw new NotImplementedException();
+    public async Task<LlmChatResult> ChatAsync(string modelId, IReadOnlyList<LlmMessage> messages, CancellationToken ct = default)
+    {
+        var payload = new
+        {
+            messages = messages.Select(m => new { role = m.Role, content = m.Content }).ToArray()
+        };
+        string json = JsonSerializer.Serialize(payload);
+        string url = $"{_options.ApiBaseUrl}/llm/models/{modelId}/chat";
+
+        string text = await SendAsync(() => new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        }, ct);
+
+        using JsonDocument doc = JsonDocument.Parse(text);
+        LlmChatResult result = new()
+        {
+            Content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? string.Empty : string.Empty
+        };
+
+        if (doc.RootElement.TryGetProperty("usage", out JsonElement u) && u.ValueKind == JsonValueKind.Object)
+        {
+            result.InputTokens = u.TryGetProperty("inputTokens", out JsonElement it) && it.ValueKind == JsonValueKind.Number ? it.GetInt32() : 0;
+            result.OutputTokens = u.TryGetProperty("outputTokens", out JsonElement ot) && ot.ValueKind == JsonValueKind.Number ? ot.GetInt32() : 0;
+        }
+
+        return result;
+    }
 
     private async Task<string> GetTokenAsync(bool forceRefresh, CancellationToken ct)
     {
