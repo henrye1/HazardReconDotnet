@@ -31,7 +31,7 @@ public class ChatServiceTests
         ChatService.ChatResponse res = service.ProcessQuestion("How many untraced?", Aggregates());
 
         Assert.True(res.IsError);
-        Assert.NotNull(res.ErrorMessage);
+        Assert.Equal("Chat is unavailable - the LLM gateway is not configured.", res.ErrorMessage);
     }
 
     [Fact]

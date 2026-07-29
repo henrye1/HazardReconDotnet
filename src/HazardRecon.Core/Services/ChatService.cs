@@ -18,7 +18,11 @@ JSON, then a question. Answer only from those figures. Report numbers exactly as
 given (thousands separators; rand amounts as R1,234,567.89). If the figures do not
 contain the answer, say so plainly and say what would. You have aggregates only, not
 account-level data, so you cannot answer questions about individual accounts. Keep
-the answer short — a few sentences or a short bullet list. Markdown, no tables.";
+the answer short — a few sentences or a short bullet list. Markdown, no tables.
+The JSON covers two distinct checks: Check 1 (default traceability) figures are the
+unprefixed keys such as untraced, traced_writeoff, traced_ifrs9 and trace_rate, while
+Check 2 (write-offs never flagged as default) figures carry the check2_ prefix, e.g.
+check2_total, check2_in_window.";
 
     private readonly ILlmClient? _client;
     private readonly string? _modelId;

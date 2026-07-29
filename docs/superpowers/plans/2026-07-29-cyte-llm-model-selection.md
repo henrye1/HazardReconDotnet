@@ -2287,8 +2287,19 @@ const check = (name, cond, detail) => {
   else { console.log(`  FAIL  ${name}${detail ? " -> " + detail : ""}`); failures++; }
 };
 
-const res = await fetch(`${base}/api/models`);
-const text = await res.text();
+// An unreachable server is the most likely failure for a diagnostic script, so
+// it must report the URL and the reason rather than an opaque fetch stack trace.
+let res, text;
+try {
+  res = await fetch(`${base}/api/models`);
+  text = await res.text();
+} catch (e) {
+  console.error(`ERROR: could not reach ${base}/api/models`);
+  console.error(`  ${e.message}`);
+  console.error(`  Is the web app running? Start it with: cd src/HazardRecon.Web && dotnet run`);
+  process.exit(1);
+}
+
 let body = null;
 try { body = JSON.parse(text); } catch (_) { }
 

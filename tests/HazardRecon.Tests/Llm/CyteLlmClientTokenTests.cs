@@ -45,13 +45,13 @@ public class CyteLlmClientTokenTests
         DateTime now = new(2026, 7, 29, 12, 0, 0, DateTimeKind.Utc);
         FakeHttpMessageHandler handler = new((req, _) =>
             req.RequestUri!.AbsolutePath.EndsWith("/oauth/token")
-                ? (HttpStatusCode.OK, TokenJson(60))
+                ? (HttpStatusCode.OK, TokenJson(86400))
                 : (HttpStatusCode.OK, ModelsJson));
 
         CyteLlmClient client = new(Options(), handler, () => now);
 
         await client.ListModelsAsync();
-        now = now.AddSeconds(120);          // past the 60s lifetime
+        now = now.AddSeconds(86400 + 1);    // past the 24h lifetime (and its margin)
         await client.ListModelsAsync();
 
         Assert.Equal(2, handler.Requests.Count(r => r.Url.EndsWith("/oauth/token")));

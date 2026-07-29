@@ -157,7 +157,18 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 capturedJob.Roots, capturedJob.Outdir, logger: Logger,
                 analyze: analyst != null, analyst: analyst);
 
-            capturedJob.AnalysisPayload = AiAnalysisService.BuildAnalysisPayload(outResult.Results);
+            // Isolated on purpose: this aggregation only feeds /api/chat. It must never
+            // turn a completed run (workbook/CSVs/dashboard already on disk) into an
+            // "error" job just because building the chat payload throws - especially on
+            // a skip-analysis run, where this is the first time it runs outside the engine.
+            try
+            {
+                capturedJob.AnalysisPayload = AiAnalysisService.BuildAnalysisPayload(outResult.Results);
+            }
+            catch (Exception payloadEx)
+            {
+                Logger($"Could not build chat payload: {payloadEx.GetType().Name}: {payloadEx.Message}", "warn");
+            }
 
             var setSummaries = outResult.Results.Select(kv => new
             {

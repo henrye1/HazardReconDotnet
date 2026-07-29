@@ -77,20 +77,31 @@ class Program
                 {
                     CyteLlmClient client = new(llmOptions);
                     IReadOnlyList<LlmModel> models = client.ListModelsAsync().GetAwaiter().GetResult();
-                    LlmModel? chosen = ModelResolver.Resolve(models, modelFragment);
 
-                    if (chosen == null)
+                    if (models.Count == 0)
                     {
-                        Console.WriteLine($"Error: no model matches '{modelFragment}'. Available models:");
-                        foreach (LlmModel m in models)
-                        {
-                            Console.WriteLine($"  {m.Id}  {m.FriendlyName}  ({m.ModelName})");
-                        }
-                        return 1;
+                        // The gateway is reachable but offered nothing to pick from - this is a
+                        // degradation, not a fatal error, exactly like the web host's dropdown
+                        // falling back to "Skip AI analysis".
+                        Console.WriteLine("! Gateway returned no models - continuing without AI analysis.");
                     }
+                    else
+                    {
+                        LlmModel? chosen = ModelResolver.Resolve(models, modelFragment);
 
-                    Console.WriteLine($"Using model: {chosen.FriendlyName} ({chosen.ModelName})");
-                    analyst = new AiAnalysisService(client, chosen.Id);
+                        if (chosen == null)
+                        {
+                            Console.WriteLine($"Error: no model matches '{modelFragment}'. Available models:");
+                            foreach (LlmModel m in models)
+                            {
+                                Console.WriteLine($"  {m.Id}  {m.FriendlyName}  ({m.ModelName})");
+                            }
+                            return 1;
+                        }
+
+                        Console.WriteLine($"Using model: {chosen.FriendlyName} ({chosen.ModelName})");
+                        analyst = new AiAnalysisService(client, chosen.Id);
+                    }
                 }
                 catch (Exception ex)
                 {
