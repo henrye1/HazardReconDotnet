@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HazardRecon.Cli/HazardRecon.Cli.csproj" />
+    <Project Path="src/HazardRecon.Core/HazardRecon.Core.csproj" />
+    <Project Path="src/HazardRecon.Web/HazardRecon.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HazardRecon.Tests/HazardRecon.Tests.csproj" />
+  </Folder>
+</Solution>

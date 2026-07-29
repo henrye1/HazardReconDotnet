@@ -1,0 +1,196 @@
+/* Headless harness for wwwroot/app.js: stubs just enough DOM/fetch/timers to
+   drive the run+poll state machine and assert the UI can never be left stuck
+   on "running".
+
+   Run:  node tests/client/app.harness.mjs
+   Or point it at another copy of the file to compare behaviour:
+         node tests/client/app.harness.mjs <path-to-app.js>          */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import vm from "node:vm";
+
+// optional argv[2] lets the same scenarios run against another copy of app.js
+const TARGET = process.argv[2] ?? fileURLToPath(new URL("../../src/HazardRecon.Web/wwwroot/app.js", import.meta.url));
+const SRC = readFileSync(TARGET, "utf8");
+console.log(`target: ${TARGET}\n`);
+
+function makeEl(id = "") {
+  const kids = [];
+  const el = {
+    id, className: "", innerHTML: "", textContent: "", value: "", src: "", href: "",
+    disabled: false, scrollTop: 0, scrollHeight: 0, parentNode: null,
+    classList: {
+      _s: new Set(),
+      add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
+      contains(c) { return this._s.has(c); },
+    },
+    appendChild(c) { kids.push(c); c.parentNode = el; return c; },
+    remove() { const i = kids.indexOf(el); if (i >= 0) kids.splice(i, 1); },
+    addEventListener() {}, scrollIntoView() {}, focus() {},
+    querySelector(sel) {
+      const want = sel.replace(".", "");
+      return kids.find(k => (k.className || "").split(" ").includes(want)) || null;
+    },
+    get children() { return kids; },
+  };
+  return el;
+}
+
+function newCtx() {
+  const els = new Map();
+  const $get = (sel) => {
+    const id = sel.startsWith("#") ? sel.slice(1) : sel;
+    if (!els.has(id)) els.set(id, makeEl(id));
+    return els.get(id);
+  };
+  const timers = { armed: null, cleared: 0, nextId: 1, id: null };
+  const ctx = {
+    console,
+    document: {
+      querySelector: $get,
+      createElement: () => makeEl(),
+    },
+    localStorage: { _d: {}, getItem(k) { return this._d[k] ?? null; }, setItem(k, v) { this._d[k] = v; } },
+    setInterval: (fn) => { timers.armed = fn; timers.id = timers.nextId++; return timers.id; },
+    clearInterval: () => { timers.cleared++; timers.armed = null; },
+    fetch: null,
+    Number, JSON, String, Date, Object, Array, Math, Promise, encodeURIComponent,
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  return { ctx, els, timers, $get };
+}
+
+// Both text() and json() are provided so the fixed client (text-based) and the
+// unfixed one (r.json()) can be driven by the same scenarios. json() rejects on
+// a non-JSON body, exactly as the browser does.
+const mkRes = (status, body) => ({
+  ok: status >= 200 && status < 300, status,
+  text: () => Promise.resolve(body),
+  json: () => new Promise((res, rej) => {
+    try { res(JSON.parse(body)); } catch (e) { rej(new SyntaxError("Unexpected end of JSON input")); }
+  }),
+});
+const jsonRes = (status, obj) => mkRes(status, JSON.stringify(obj));
+const rawRes = (status, body) => mkRes(status, body);
+
+function boot(fetchImpl) {
+  const h = newCtx();
+  h.ctx.fetch = fetchImpl;
+  vm.runInContext(SRC, h.ctx);
+  // give the module a RUN_ID the way discovery does
+  h.ctx.showInventory({ run_id: "RID1", inventory: { root: "r", sets: [{ key: "K", label: "L" }] }, problems: [] });
+  return h;
+}
+
+const badge = (h) => h.$get("#run-badge").textContent;
+const errText = (h) => { const e = h.$get("#card-run").querySelector(".err"); return e ? e.textContent : null; };
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+// An unhandled rejection is the bug under test, not a harness crash: in a
+// browser it is a silent console error that leaves the UI mid-flight.
+process.on("unhandledRejection", (e) => {
+  console.log(`  (unhandled promise rejection: ${e && e.message} - silent in a browser)`);
+});
+
+let failures = 0;
+function check(name, cond, detail) {
+  if (cond) { console.log(`  PASS  ${name}`); }
+  else { console.log(`  FAIL  ${name}${detail ? " -> " + detail : ""}`); failures++; }
+}
+
+/* ---------------- A: server forgot the run (restart) ---------------- */
+async function scenarioA() {
+  console.log("A) poll hits 404 'Unknown run' (server restarted mid-run)");
+  let runCalls = 0;
+  const h = boot((url) => {
+    if (url === "/api/run") { runCalls++; return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" })); }
+    if (url.startsWith("/api/job/")) return Promise.resolve(jsonRes(404, { error: "Unknown run" }));
+    return Promise.resolve(jsonRes(200, {}));
+  });
+  h.ctx.beginRun();
+  await tick(); await tick();
+  check("interval armed after /api/run", h.timers.armed !== null);
+  h.timers.armed();               // one poll -> 404
+  await tick(); await tick();
+  check("polling stopped", h.timers.armed === null, "still polling");
+  check("badge is 'error', not 'running'", badge(h) === "error", `badge='${badge(h)}'`);
+  check("explains the restart", /restarted/i.test(errText(h) || ""), `err='${errText(h)}'`);
+  check("Run button re-enabled", h.$get("#btn-run").disabled === false);
+}
+
+/* ---------------- B: /api/run 500 with an empty body ---------------- */
+async function scenarioB() {
+  console.log("B) /api/run returns 500 with an empty, non-JSON body");
+  const h = boot((url) => {
+    if (url === "/api/run") return Promise.resolve(rawRes(500, ""));
+    return Promise.resolve(jsonRes(200, {}));
+  });
+  h.ctx.beginRun();
+  await tick(); await tick(); await tick();
+  check("interval never armed", h.timers.armed === null);
+  check("badge is 'error', not 'running'", badge(h) === "error", `badge='${badge(h)}'`);
+  check("surfaces the 500", /500/.test(errText(h) || ""), `err='${errText(h)}'`);
+  check("Run button re-enabled", h.$get("#btn-run").disabled === false);
+}
+
+/* ---------------- C: transient blips then success ---------------- */
+async function scenarioC() {
+  console.log("C) 3 transient network failures, then the run completes");
+  let jobCalls = 0;
+  const result = { sets: [{ key: "K", label: "L", files: [] }], workbook: "w.xlsx", dashboard: "d.html", memo: null };
+  const h = boot((url) => {
+    if (url === "/api/run") return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" }));
+    if (url.startsWith("/api/job/")) {
+      jobCalls++;
+      if (jobCalls <= 3) return Promise.reject(new Error("network down"));
+      return Promise.resolve(jsonRes(200, { id: "RID1", status: "done", log: [], error: null, result }));
+    }
+    return Promise.resolve(jsonRes(200, {}));
+  });
+  h.ctx.beginRun();
+  await tick(); await tick();
+  for (let i = 0; i < 3; i++) { h.timers.armed(); await tick(); await tick(); }
+  check("survives 3 blips, still polling", h.timers.armed !== null, "gave up too early");
+  check("badge still 'running' during blips", badge(h) === "running", `badge='${badge(h)}'`);
+  h.timers.armed();
+  await tick(); await tick();
+  check("reaches 'complete'", badge(h) === "complete", `badge='${badge(h)}'`);
+  check("polling stopped", h.timers.armed === null);
+  check("results card shown", h.$get("#card-res").classList.contains("hide") === false);
+}
+
+/* ---------------- D: server gone for good ---------------- */
+async function scenarioD() {
+  console.log("D) server dies permanently mid-run");
+  const h = boot((url) => {
+    if (url === "/api/run") return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" }));
+    return Promise.reject(new Error("ECONNREFUSED"));
+  });
+  h.ctx.beginRun();
+  await tick(); await tick();
+  for (let i = 0; i < 12; i++) { if (h.timers.armed) { h.timers.armed(); await tick(); await tick(); } }
+  check("gives up rather than spinning forever", h.timers.armed === null);
+  check("badge is 'error'", badge(h) === "error", `badge='${badge(h)}'`);
+  check("Run button re-enabled", h.$get("#btn-run").disabled === false);
+}
+
+/* ---------------- E: done but result missing ---------------- */
+async function scenarioE() {
+  console.log("E) status 'done' but result is null");
+  const h = boot((url) => {
+    if (url === "/api/run") return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" }));
+    if (url.startsWith("/api/job/")) return Promise.resolve(jsonRes(200, { status: "done", log: [], result: null }));
+    return Promise.resolve(jsonRes(200, {}));
+  });
+  h.ctx.beginRun();
+  await tick(); await tick();
+  h.timers.armed();
+  await tick(); await tick();
+  check("does not sit on a bare 'complete' with no results", badge(h) === "error", `badge='${badge(h)}'`);
+  check("polling stopped", h.timers.armed === null);
+}
+
+for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE]) { await s(); console.log(""); }
+console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
+process.exit(failures === 0 ? 0 : 1);

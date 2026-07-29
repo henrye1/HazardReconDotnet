@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hazard-Rate Reconciliation (.NET)</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>Hazard-Rate Reconciliation</h1>
+    <p>Anchor Point Risk &middot; reconcile engine defaults against write-offs and IFRS9, and review the model output</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- STEP 1 : choose folders -->
+  <section class="card">
+    <div class="stepline"><span class="step">1</span><h2>Point the app at your analysis folders</h2></div>
+
+    <p class="hint" style="margin:0 0 10px">Paste the full path of each analysis folder (up to 4).
+      Each folder holds everything for its run: the write-off CSV, the IFRS9 CSV,
+      <code>debug.zip</code> (or the extracted files) and <code>scenario.json</code>.
+      Nothing is copied &mdash; files are read where they are.</p>
+
+    <div id="paths"></div>
+    <button class="btn" id="btn-add-path">+ Add another folder</button>
+
+    <div class="actions">
+      <button class="btn primary big" id="btn-check" disabled>Check folders</button>
+    </div>
+  </section>
+
+  <!-- STEP 2 : confirm -->
+  <section class="card hide" id="card-inv">
+    <div class="stepline"><span class="step">2</span><h2>Confirm what was found</h2></div>
+    <p class="muted" id="inv-root"></p>
+    <div id="inv-problems"></div>
+    <table class="grid" id="inv-table"></table>
+    <div class="actions">
+      <button class="btn primary big" id="btn-run">Run reconciliation</button>
+      <span class="hint">Two checks per set, plus migrations and engine results.</span>
+    </div>
+  </section>
+
+  <!-- STEP 3 : progress -->
+  <section class="card hide" id="card-run">
+    <div class="stepline"><span class="step">3</span><h2>Progress</h2>
+      <span class="badge" id="run-badge">running</span></div>
+    <div class="logbox" id="log"></div>
+  </section>
+
+  <!-- STEP 4 : results -->
+  <section class="card hide" id="card-res">
+    <div class="stepline"><span class="step">4</span><h2>Results</h2>
+      <button class="btn" id="btn-rerun" style="margin-left:auto"
+              title="Run the reconciliation again on the same folders">&#8635; Run again</button></div>
+    <div id="res-sets"></div>
+    <div class="dlrow" id="res-downloads"></div>
+    <h3>Dashboard</h3>
+    <p class="hint">The full finance dashboard, with the interactive migration matrix and engine results.
+      <a id="res-open" href="#" target="_blank" rel="noopener">Open in a new tab &nearr;</a></p>
+    <iframe id="res-frame" title="Reconciliation dashboard"></iframe>
+  </section>
+
+  <!-- STEP 5 : ask about this run -->
+  <section class="card hide" id="card-chat">
+    <div class="stepline"><span class="step">5</span><h2>Ask about this run</h2></div>
+    <div class="chatlog" id="chat-log"></div>
+    <div class="chatrow">
+      <textarea id="chat-input" class="chatbox" rows="2"
+                placeholder="e.g. why is the 5&rarr;5 cell bigger than the default count?"></textarea>
+      <button class="btn primary" id="btn-chat">Send</button>
+    </div>
+    <p class="hint">Each question sends masked query results to the Claude API and costs a few cents.</p>
+  </section>
+
+</main>
+
+<footer class="wrap">
+  <p>Check 1 &mdash; every default (Bucket&nbsp;0) should appear in the write-off file or the IFRS9 file; those in
+     neither are <b>untraced</b>. &nbsp; Check 2 &mdash; the reverse: scored accounts written off but
+     <b>never flagged as a default</b>, with the ones written off inside the scoring window flagged as the
+     priority exceptions.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

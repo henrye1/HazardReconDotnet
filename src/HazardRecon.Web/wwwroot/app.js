@@ -1,0 +1,324 @@
+/* Hazard-Rate Reconciliation - front end (.NET) */
+
+const $ = (s) => document.querySelector(s);
+const el = (t, c, h) => { const n = document.createElement(t); if (c) n.className = c; if (h !== undefined) n.innerHTML = h; return n; };
+const fmt = (n) => (n === null || n === undefined) ? "&mdash;" : Number(n).toLocaleString();
+
+let RUN_ID = null;
+let POLL = null;
+let seen = 0;
+let pollFails = 0;
+
+/* Tolerate a body that isn't JSON (an empty 500, an error page) so a bad
+   response surfaces as a message instead of a rejected promise nobody is
+   listening to - that rejection is what leaves the UI stuck on "running". */
+function readJson(r) {
+  return r.text().then(t => {
+    let j = null;
+    if (t) { try { j = JSON.parse(t); } catch (_) { } }
+    return { ok: r.ok, status: r.status, j };
+  });
+}
+
+/* ---------- step 1: folder paths ---------- */
+const MAX_SETS = 4;
+let PATHS = 0;
+
+function addPathRow() {
+  if (PATHS >= MAX_SETS) return;
+  PATHS += 1;
+  const i = PATHS;
+  const d = el("div", "slot", `
+    <div class="slothead"><b>Folder ${i}</b>
+      <button class="btn clear" id="path${i}-clear" title="Clear">&#10005;</button></div>
+    <div class="row">
+      <input type="text" class="pathbox" id="path${i}" spellcheck="false"
+             placeholder="C:\\...\\DEBUG FILE 30 JUNE 2026 0.5 PERCENT">
+    </div>`);
+  $("#paths").appendChild(d);
+  $("#path" + i).addEventListener("input", updateReady);
+  $("#path" + i + "-clear").addEventListener("click", () => {
+    $("#path" + i).value = ""; updateReady();
+  });
+  $("#btn-add-path").disabled = PATHS >= MAX_SETS;
+}
+
+function pathValues() {
+  const out = [];
+  for (let i = 1; i <= PATHS; i++) {
+    const v = $("#path" + i).value.trim();
+    if (v) out.push(v);
+  }
+  return out;
+}
+
+function updateReady() { $("#btn-check").disabled = pathValues().length === 0; }
+
+addPathRow();
+$("#btn-add-path").addEventListener("click", addPathRow);
+
+(function restorePaths() {
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem("hr_paths") || "[]"); } catch (_) { }
+  saved.slice(0, MAX_SETS).forEach((p, i) => {
+    while (PATHS < i + 1) addPathRow();
+    $("#path" + (i + 1)).value = p;
+  });
+  updateReady();
+})();
+
+function discover() {
+  const paths = pathValues();
+  const fd = new FormData();
+  paths.forEach(p => fd.append("paths", p));
+  return fetch("/api/discover", { method: "POST", body: fd })
+    .then(readJson)
+    .then(({ ok, status, j }) => {
+      if (!ok || !j) throw new Error((j && j.error) || `Discovery failed (server returned ${status}).`);
+      localStorage.setItem("hr_paths", JSON.stringify(paths));
+      showInventory(j);
+      return j;
+    });
+}
+
+$("#btn-check").addEventListener("click", () => {
+  const btn = $("#btn-check");
+  btn.disabled = true; btn.textContent = "Checking...";
+  discover()
+    .catch(e => showError($("#card-inv"), e.message))
+    .finally(() => { btn.disabled = false; btn.textContent = "Check folders"; updateReady(); });
+});
+
+function showError(card, msg) {
+  card.classList.remove("hide");
+  const box = card.querySelector(".err") || el("div", "err");
+  box.textContent = msg;
+  if (!box.parentNode) card.appendChild(box);
+}
+
+function showInventory(j) {
+  RUN_ID = j.run_id;
+  const card = $("#card-inv");
+  card.classList.remove("hide");
+  const old = card.querySelector(".err"); if (old) old.remove();
+
+  $("#inv-root").innerHTML = "Reading from <code>" + (j.inventory.root || "") + "</code>";
+
+  const probs = $("#inv-problems");
+  probs.innerHTML = "";
+  if (j.problems && j.problems.length) {
+    probs.appendChild(el("div", "warn",
+      "<b>Worth knowing before you run:</b><ul>" +
+      j.problems.map(p => "<li>" + p + "</li>").join("") + "</ul>"));
+  }
+
+  const t = $("#inv-table");
+  t.innerHTML =
+    "<tr><th>Set</th><th>Folder</th><th>Write-off</th><th>Defaults</th>" +
+    "<th>Scored</th><th>IFRS9</th><th>Engine</th></tr>" +
+    j.inventory.sets.map(s =>
+      "<tr><td><b>" + s.key + "</b></td><td>" + s.label + "</td>" +
+      cell(s.writeoff) + cell(s.lgd_defaults) + cell(s.pd_scored) +
+      cell(s.ifrs9) + cell(s.scenario) + "</tr>").join("");
+
+  $("#btn-run").disabled = !(j.inventory.sets || []).length;
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+const cell = (v) => "<td>" + (v ? "<span class='ok'>&#10003;</span> " + v
+                                : "<span class='no'>&#10007;</span>") + "</td>";
+
+/* ---------- step 3: run ---------- */
+function stopPolling() {
+  if (POLL) { clearInterval(POLL); POLL = null; }
+  seen = 0;
+  pollFails = 0;
+}
+
+/* Every dead end goes through here: stop polling, say why, give the button
+   back. Nothing may leave the badge on "running" with no way forward. */
+function failRun(msg) {
+  stopPolling();
+  setBadge("error", "err");
+  showError($("#card-run"), msg);
+  $("#btn-run").disabled = false;
+}
+
+function beginRun() {
+  if (!RUN_ID) return;
+  stopPolling();
+  $("#card-run").classList.remove("hide");
+  $("#card-res").classList.add("hide");
+  $("#log").innerHTML = "";
+  setBadge("running", "run");
+  $("#btn-run").disabled = true;
+  $("#card-run").scrollIntoView({ behavior: "smooth", block: "start" });
+  startRun(false);
+}
+
+function startRun(hasRetried) {
+  fetch("/api/run", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: RUN_ID })
+  }).then(readJson)
+    .then(({ ok, status, j }) => {
+      if (status === 404 && !hasRetried && pathValues().length) {
+        // the app was restarted and forgot this run - quietly re-check the
+        // same folders, then start again with the fresh run id
+        return discover()
+          .then(() => startRun(true))
+          .catch(e => failRun(e.message));
+      }
+      if (!ok || !j) {
+        failRun((j && j.error) || `The server returned ${status} when starting the run.`);
+        return;
+      }
+      if (j.error) { failRun(j.error); return; }
+      stopPolling();
+      POLL = setInterval(poll, 700);
+    })
+    .catch(e => failRun("Could not start the run - " + e.message));
+}
+
+$("#btn-run").addEventListener("click", beginRun);
+$("#btn-rerun").addEventListener("click", beginRun);
+
+function setBadge(text, cls) {
+  const b = $("#run-badge");
+  b.textContent = text;
+  b.className = "badge " + (cls || "");
+}
+
+// consecutive failed polls tolerated (~6s) before we stop and say so
+const MAX_POLL_FAILS = 8;
+
+function pollFailed(msg) {
+  if (++pollFails >= MAX_POLL_FAILS) failRun(msg);
+}
+
+function poll() {
+  fetch("/api/job/" + RUN_ID).then(readJson).then(({ ok, status, j }) => {
+    // the server forgot this run (it was restarted) - polling can never
+    // succeed again, so stop instead of spinning on "running" forever
+    if (status === 404) {
+      failRun("The server no longer knows about this run - it was restarted. " +
+              "Check the folders again to start a new run.");
+      return;
+    }
+    if (!ok || !j || typeof j.status !== "string") {
+      pollFailed(`The server returned ${status} while the run was in progress.`);
+      return;
+    }
+    pollFails = 0;
+
+    const box = $("#log");
+    (j.log || []).slice(seen).forEach(l => {
+      const d = el("div");
+      d.innerHTML = "<span class='t'>" + l.t + "</span><span class='" + l.kind + "'>" +
+        mark(l.kind) + escapeHtml(l.msg) + "</span>";
+      box.appendChild(d);
+    });
+    if ((j.log || []).length !== seen) { seen = (j.log || []).length; box.scrollTop = box.scrollHeight; }
+
+    if (j.status === "done") {
+      stopPolling();
+      if (!j.result) { failRun("The run finished but returned no results."); return; }
+      setBadge("complete", "done");
+      $("#btn-run").disabled = false;
+      showResults(j.result);
+    } else if (j.status === "error") {
+      stopPolling();
+      setBadge("error", "err");
+      $("#btn-run").disabled = false;
+      showError($("#card-run"), j.error || "The run failed.");
+    }
+  }).catch(() => pollFailed("Lost contact with the server while the run was in progress."));
+}
+
+const mark = (k) => k === "tool" ? "→ " : k === "ok" ? "✓ " : k === "warn" ? "! " : k === "head" ? "■ " : "  ";
+const escapeHtml = (s) => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+/* ---------- step 4: results ---------- */
+function showResults(res) {
+  if (!res) return;
+  const card = $("#card-res");
+  card.classList.remove("hide");
+
+  $("#res-sets").innerHTML = res.sets.map(s => `
+    <div class="setcard">
+      <h4>${s.key} <span class="muted">&mdash; ${s.label || ""}</span></h4>
+      <p class="muted">Scoring window ${s.window || "n/a"} &middot;
+         ${fmt(s.scored)} scored accounts${s.ifrs9_overlap === 0
+        ? " &middot; <b>IFRS9 could not be matched for this set</b> (different account numbering)" : ""}</p>
+      <div class="tiles">
+        <div class="tile"><div class="l">Defaults (Bucket 0)</div>
+          <div class="v">${fmt(s.defaults)}</div><div class="s">${s.exposure_fmt}</div></div>
+        <div class="tile"><div class="l">Traced</div>
+          <div class="v" style="color:var(--green)">${fmt(s.traced)}</div>
+          <div class="s">${s.trace_rate}% &middot; W/O ${fmt(s.traced_writeoff)} / IFRS9 ${fmt(s.traced_ifrs9)}</div></div>
+        <div class="tile"><div class="l">Untraced defaults</div>
+          <div class="v" style="color:var(--red)">${fmt(s.untraced)}</div>
+          <div class="s">${s.untraced_fmt}</div></div>
+        <div class="tile"><div class="l">Written off, never defaulted</div>
+          <div class="v" style="color:var(--amber)">${fmt(s.wo_in_window)}</div>
+          <div class="s">in window &middot; ${s.wo_in_window_fmt}</div></div>
+      </div>
+      <p class="hint">Check 2 found ${fmt(s.wo_total)} in total &mdash; ${fmt(s.wo_in_window)} inside the
+        scoring window (the priority exceptions) and ${fmt(s.wo_post_window)} written off after it closed.</p>
+    </div>`).join("");
+
+  const base = "/runs/" + RUN_ID + "/output/";
+  const bust = "?v=" + Date.now();
+  const links = [`<a class="dl x" href="${base}${encodeURIComponent(res.workbook)}${bust}">&#128202; ${res.workbook}</a>`];
+  if (res.memo) {
+    links.unshift(`<a class="dl x" href="${base}${encodeURIComponent(res.memo)}${bust}">&#128221; ${res.memo}</a>`);
+  }
+  res.sets.forEach(s => (s.files || []).forEach(f => {
+    const key = f.includes("writeoff_not_default") ? "&#9888;" :
+      f.includes("untraced") ? "&#128203;" : "&#128196;";
+    links.push(`<a class="dl" href="${base}${encodeURIComponent(f)}${bust}">${key} ${f}</a>`);
+  }));
+  $("#res-downloads").innerHTML = links.join("");
+
+  const durl = base + encodeURIComponent(res.dashboard) + bust;
+  $("#res-frame").src = durl;
+  $("#res-open").href = durl;
+  $("#card-chat").classList.remove("hide");
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* ---------- step 5: ask about this run ---------- */
+function addChatBubble(cls, html) {
+  const box = $("#chat-log");
+  const d = el("div", "bubble " + cls, html);
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+  return d;
+}
+
+function sendChat() {
+  const input = $("#chat-input");
+  const msg = input.value.trim();
+  if (!msg || !RUN_ID) return;
+  addChatBubble("user", escapeHtml(msg));
+  input.value = "";
+  const btn = $("#btn-chat");
+  btn.disabled = true; input.disabled = true;
+  const thinking = addChatBubble("bot thinking", "thinking&hellip;");
+  fetch("/api/chat", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: RUN_ID, message: msg })
+  }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      thinking.remove();
+      if (!ok) { addChatBubble("bot err", escapeHtml(j.error || "Chat is unavailable.")); return; }
+      addChatBubble("bot", j.reply_html);
+    })
+    .catch(() => { thinking.remove(); addChatBubble("bot err", "Network error - please try again."); })
+    .finally(() => { btn.disabled = false; input.disabled = false; input.focus(); });
+}
+
+$("#btn-chat").addEventListener("click", sendChat);
+$("#chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
