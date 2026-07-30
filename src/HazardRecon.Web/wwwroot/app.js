@@ -966,6 +966,171 @@ function renderDashboardTab(res) {
   renderDashCommentary(res);
   renderDashAi(res);
   renderDashChecks(res);
+  renderDashMatrix(res);
+}
+
+/* ---------- migration matrix ---------- */
+/* The bucket labels the engine works in. Column 5 is the default state and 6 is
+   closed/settled, which is why both are absorbing. */
+const MIG_BUCKETS = ["1", "2", "3", "4", "5", "6"];
+
+/* Five steps from sparse to dense. Kept as explicit stops rather than a computed
+   ramp so the legend and the cells cannot drift apart. */
+const HEAT_STOPS = [
+  { bg: "#eef0f8", fg: "var(--cl-off-text-color)" },
+  { bg: "#c9cfe8", fg: "var(--cl-text-color)" },
+  { bg: "#8f9bd0", fg: "#fff" },
+  { bg: "#4a5cb0", fg: "#fff" },
+  { bg: "var(--cl-primary-color)", fg: "#fff" },
+];
+
+/* What the matrix is currently showing. */
+let MIG = { months: [], data: {}, month: "", share: false, pick: null };
+
+function renderDashMatrix(res) {
+  // the first set with a matrix; a set with no scored file has nothing to show
+  const withMatrix = (res.dashboard_sets || []).filter(d => (d.months || []).length > 0);
+  const row = $("#dash-matrix-row");
+
+  if (!withMatrix.length) {
+    row.classList.add("hide");
+    MIG = { months: [], data: {}, month: "", share: false, pick: null };
+    return;
+  }
+  row.classList.remove("hide");
+
+  const d = withMatrix[0];
+  MIG = { months: d.months, data: d.migration, month: d.months[0], share: false, pick: null };
+
+  $("#mig-month").innerHTML = d.months
+    .map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+  $("#mig-month").value = MIG.month;
+  $("#mig-legend").innerHTML = HEAT_STOPS
+    .map(s => `<span style="background:${s.bg}"></span>`).join("");
+
+  renderMonthly(d);
+  drawMatrix();
+}
+
+/* The busiest cell sets the top of the scale, so a quiet month still reads. */
+function heatOf(value, peak) {
+  if (!value) return HEAT_STOPS[0];
+  const step = Math.min(HEAT_STOPS.length - 1,
+    Math.max(1, Math.ceil(value / peak * (HEAT_STOPS.length - 1))));
+  return HEAT_STOPS[step];
+}
+
+function drawMatrix() {
+  const rows = MIG.data[MIG.month] || [];
+  if (!rows.length) { $("#mig-table").innerHTML = ""; return; }
+
+  const rowTotals = rows.map(r => r.reduce((a, v) => a + v, 0));
+  const peak = Math.max(1, ...rows.flat());
+  const total = rowTotals.reduce((a, v) => a + v, 0);
+
+  const head = `<thead><tr><th class="corner">From &darr; / To &rarr;</th>` +
+    MIG_BUCKETS.map(b => `<th class="bh">${b}</th>`).join("") +
+    `<th class="cohort">Cohort</th></tr></thead>`;
+
+  const body = rows.map((cells, i) => {
+    const tds = cells.map((v, j) => {
+      const stop = heatOf(v, peak);
+      // row % is of the row's own cohort, so an empty row shows no share at all
+      const text = MIG.share
+        ? (rowTotals[i] ? (v / rowTotals[i] * 100).toFixed(1) + "%" : "&mdash;")
+        : fmt(v);
+      const on = MIG.pick && MIG.pick.i === i && MIG.pick.j === j;
+      return `<td class="hc${on ? " on" : ""}" data-i="${i}" data-j="${j}"` +
+        ` style="background:${stop.bg};color:${stop.fg}">${text}</td>`;
+    }).join("");
+    return `<tr><th class="rh">${MIG_BUCKETS[i]}</th>${tds}` +
+      `<td class="cohort">${fmt(rowTotals[i])}</td></tr>`;
+  }).join("");
+
+  $("#mig-table").innerHTML = head + `<tbody>${body}</tbody>`;
+
+  // the diagonal is the population that stayed put
+  const stayed = rows.reduce((a, r, i) => a + (r[i] || 0), 0);
+  const pct = (v) => total ? (v / total * 100).toFixed(1) + "%" : "0%";
+  $("#mig-summary").textContent =
+    `${fmt(total)} transitions · ${pct(stayed)} stayed, ${pct(total - stayed)} migrated`;
+
+  Array.from($("#mig-table").querySelectorAll("td.hc")).forEach(td =>
+    td.addEventListener("click", () => pickCell(
+      Number(td.getAttribute("data-i")), Number(td.getAttribute("data-j")))));
+
+  drawCohortDetail(rows, rowTotals, total);
+}
+
+function pickCell(i, j) {
+  MIG.pick = { i, j };
+  drawMatrix();
+}
+
+/* The side panel: what the selected cell actually counts. */
+function drawCohortDetail(rows, rowTotals, total) {
+  const head = `<div class="cardhead"><span>Cohort detail</span></div>`;
+
+  if (!MIG.pick) {
+    $("#mig-detail").innerHTML = head + `
+      <div class="cohortempty">
+        <span class="ms-icon">touch_app</span>
+        <span class="t">Select a cell to inspect the cohort</span>
+        <span class="d">Counts are account movements, so one account can appear in several
+          months across the window.</span>
+      </div>`;
+    return;
+  }
+
+  const { i, j } = MIG.pick;
+  const count = (rows[i] || [])[j] || 0;
+  const from = MIG_BUCKETS[i], to = MIG_BUCKETS[j];
+  const kind = i === j ? "Stayed in bucket" : "Moved between buckets";
+  const title = i === j ? `Bucket ${from}` : `Bucket ${from} → Bucket ${to}`;
+  const share = rowTotals[i]
+    ? `${(count / rowTotals[i] * 100).toFixed(1)}% of bucket ${from}'s cohort`
+    : "no cohort in this bucket";
+
+  $("#mig-detail").innerHTML = head + `
+    <div class="cohortbody">
+      <div class="ck"><span class="kind">${kind}</span><span class="title">${title}</span></div>
+      <div class="cbox">
+        <span class="l">Account movements</span>
+        <span class="v">${fmt(count)}</span>
+        <span class="s">${escapeHtml(share)}</span>
+      </div>
+      <span class="hint" style="margin:0">${escapeHtml(MIG.month)}</span>
+    </div>`;
+}
+
+$("#mig-month").addEventListener("change", () => {
+  MIG.month = $("#mig-month").value;
+  // the selection is a cell in the month it was picked from, so it does not carry
+  MIG.pick = null;
+  drawMatrix();
+});
+
+function setMigShare(share) {
+  MIG.share = share;
+  $("#mig-counts").classList.toggle("on", !share);
+  $("#mig-share").classList.toggle("on", share);
+  drawMatrix();
+}
+$("#mig-counts").addEventListener("click", () => setMigShare(false));
+$("#mig-share").addEventListener("click", () => setMigShare(true));
+
+/* ---------- monthly account movements ---------- */
+function renderMonthly(d) {
+  const months = (d.months || []).slice(1);
+  const totals = d.monthly_totals || [];
+
+  $("#dash-monthly").innerHTML = `
+    <div class="cardhead"><span>Monthly account movements</span></div>
+    <table class="grid tight figures">
+      <thead><tr><th>Month</th><th class="num">Migrations</th></tr></thead>
+      <tbody>${months.map((m, i) =>
+        `<tr><td>${escapeHtml(m)}</td><td class="num">${fmt(totals[i])}</td></tr>`).join("")}</tbody>
+    </table>`;
 }
 
 /* ---------- the two checks, and the population they ran over ---------- */

@@ -338,6 +338,44 @@
           <div id="dash-check2"></div>
           <div id="dash-census"></div>
 
+          <div class="dashrow" id="dash-matrix-row">
+            <div class="card grow3">
+              <div class="cardhead">
+                <span>Migration matrix</span>
+                <div class="seg" id="mig-mode">
+                  <button type="button" class="on" id="mig-counts">Counts</button>
+                  <button type="button" id="mig-share">Row %</button>
+                </div>
+              </div>
+              <div class="cardbody" style="display:grid;gap:12px">
+                <p class="hint" style="margin:0">Accounts moving between rating buckets 1&ndash;6, rebuilt
+                  from <code>pd_scored</code>. Diagonal = stayed put. The all-months total reconciles
+                  cell-for-cell to the engine's accumulated arrays in <code>debug.json</code>.</p>
+                <div class="migctl">
+                  <label for="mig-month">Month
+                    <select id="mig-month"></select>
+                  </label>
+                  <span class="hint" style="margin:0">Row % = chance of moving from the row bucket to each
+                    column bucket (rows sum to 100%).</span>
+                </div>
+                <div style="overflow-x:auto"><table class="heat" id="mig-table"></table></div>
+                <div class="heatfoot">
+                  <span class="hint" style="margin:0">Sparse</span>
+                  <div class="legend" id="mig-legend"></div>
+                  <span class="hint" style="margin:0">Dense</span>
+                  <span class="hint" style="margin:0 0 0 auto" id="mig-summary"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card grow1" id="mig-detail"></div>
+          </div>
+
+          <div class="dashrow">
+            <div class="card grow3" id="dash-hazard"></div>
+            <div class="card grow1" id="dash-monthly"></div>
+          </div>
+
           <!-- the engine's own rendering, until the native sections replace it -->
           <div class="card" id="dash-embed">
             <div class="cardhead"><span>Reconciliation dashboard</span></div>

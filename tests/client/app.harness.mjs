@@ -51,6 +51,29 @@ function makeEl(id = "") {
       const want = sel.replace(".", "");
       return kids.find(k => (k.className || "").split(" ").includes(want)) || null;
     },
+    // Scans the assigned innerHTML, because the app wires handlers onto markup it
+    // generated as a string. Without this the calls throw, and loadHistory's catch
+    // was quietly swallowing exactly that for the run rows.
+    querySelectorAll(sel) {
+      const m = String(sel).match(/^([a-z]*)\.([\w-]+)$/i);
+      if (!m) return [];
+      const tag = m[1] || "[a-z]+";
+      const re = new RegExp("<" + tag + "\\b([^>]*class=\"[^\"]*\\b" + m[2] + "\\b[^\"]*\"[^>]*)>", "gi");
+      const found = [];
+      let hit;
+      while ((hit = re.exec(el._html)) !== null) {
+        const attrs = hit[1];
+        found.push({
+          getAttribute: (n) => {
+            const a = attrs.match(new RegExp(n + "=\"([^\"]*)\""));
+            return a ? a[1] : null;
+          },
+          addEventListener() {},
+          classList: { contains: (c) => new RegExp("\\b" + c + "\\b").test(attrs) },
+        });
+      }
+      return found;
+    },
     get children() { return kids; },
   };
   return el;
@@ -974,6 +997,100 @@ async function scenarioDC() {
   check("the IFRS9 population is shown", /176,009/.test(cen));
 }
 
+/* ---------------- DE: the interactive migration matrix ---------------- */
+const MIG_FIX = {
+  "All months": [[10, 5, 0, 0, 0, 0], [0, 20, 4, 0, 0, 0], [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]],
+  "2026-01": [[6, 5, 0, 0, 0, 0], [0, 12, 4, 0, 0, 0], [0, 0, 0, 0, 0, 0],
+              [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]],
+  "2026-02": [[4, 0, 0, 0, 0, 0], [0, 8, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0],
+              [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]],
+};
+
+async function scenarioDE() {
+  console.log("DE) the migration matrix: months, counts/row %, heat and cohort detail");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.dashboard_sets = [Object.assign(JSON.parse(JSON.stringify(DASH_SET_FIX)), {
+    months: ["All months", "2026-01", "2026-02"],
+    migration: MIG_FIX,
+    monthly_totals: [27, 12],
+  })];
+  h.ctx.showResults(res, []);
+
+  const table = () => h.$get("#mig-table").innerHTML;
+
+  check("the matrix is shown", !h.$get("#dash-matrix-row").classList.contains("hide"));
+  check("six rows of six cells", (table().match(/class="hc"/g) || []).length === 36,
+    `cells=${(table().match(/class="hc"/g) || []).length}`);
+  check("the month list offers every month",
+    (h.$get("#mig-month").innerHTML.match(/<option/g) || []).length === 3);
+  check("counts are shown first", !/%/.test(table()) && />10</.test(table()),
+    "counts mode should show no percentages at all");
+  check("row cohorts are totalled", />15</.test(table()), "row 1 is 10+5 = 15");
+  check("the legend has five stops",
+    (h.$get("#mig-legend").innerHTML.match(/<span/g) || []).length === 5);
+  check("the summary counts transitions and splits them",
+    /39 transitions · 76\.9% stayed, 23\.1% migrated/.test(h.$get("#mig-summary").textContent),
+    `summary='${h.$get("#mig-summary").textContent}'`);
+
+  // an empty cell takes the sparse stop, the busiest takes the densest
+  check("the busiest cell is densest", /background:var\(--cl-primary-color\);color:#fff">20</.test(table()),
+    "20 is the peak so it should take the last stop");
+
+  // row %
+  h.$get("#mig-share")._fire("click");
+  check("row % is of the row's own cohort", /66\.7%/.test(table()),
+    "10 of 15 in row 1 should read 66.7%");
+  check("the toggle moves", /class="on"/.test(h.$get("#mig-share").className) ||
+    h.$get("#mig-share").classList.contains("on"));
+  h.$get("#mig-counts")._fire("click");
+  check("counts come back", />10</.test(table()));
+
+  // the cohort detail panel
+  check("nothing is selected at first", /Select a cell to inspect/.test(h.$get("#mig-detail").innerHTML));
+  h.ctx.pickCell(0, 0);
+  let det = h.$get("#mig-detail").innerHTML;
+  check("the diagonal reads as stayed", /Stayed in bucket/.test(det) && /Bucket 1</.test(det));
+  check("the count is shown", /class="v">10</.test(det));
+  check("the share is of the row cohort", /66\.7% of bucket 1/.test(det), `det=${det.slice(0, 300)}`);
+  check("the selected cell is marked", /class="hc on"/.test(table()));
+
+  h.ctx.pickCell(0, 1);
+  det = h.$get("#mig-detail").innerHTML;
+  check("an off-diagonal reads as moved", /Moved between buckets/.test(det) &&
+    /Bucket 1 → Bucket 2/.test(det));
+
+  // changing month clears the selection, since the cell belonged to the old month
+  h.$get("#mig-month").value = "2026-02";
+  h.$get("#mig-month")._fire("change");
+  check("the month switches", />4</.test(table()) && />8</.test(table()));
+  check("the selection is dropped", /Select a cell to inspect/.test(h.$get("#mig-detail").innerHTML));
+
+  // monthly movements
+  const mo = h.$get("#dash-monthly").innerHTML;
+  check("monthly movements exclude the aggregate", !/All months/.test(mo));
+  check("monthly totals are listed", /2026-01[\s\S]*?27/.test(mo) && /2026-02[\s\S]*?12/.test(mo));
+}
+
+/* ---------------- DF: a run with no scored file has no matrix ---------------- */
+async function scenarioDF() {
+  console.log("DF) a run with no migration data hides the matrix rather than drawing an empty one");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.dashboard_sets = [JSON.parse(JSON.stringify(DASH_SET_FIX))];  // months: []
+  h.ctx.showResults(res, []);
+
+  check("the matrix row is hidden", h.$get("#dash-matrix-row").classList.contains("hide"));
+  check("the tables above still render", /15,813/.test(h.$get("#dash-check1").innerHTML));
+}
+
 /* ---------------- DD: a set the dashboard payload knows nothing about ---------------- */
 async function scenarioDD() {
   console.log("DD) a set with no dashboard payload still renders its rows");
@@ -1120,6 +1237,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -561,6 +561,66 @@ table.grid.figures{font-variant-numeric:tabular-nums}
 table.grid td.nowrap{white-space:nowrap}
 table.grid td.bad{font-weight:700;color:var(--cl-error-color)}
 
+/* side-by-side dashboard cards that reflow when there is no room */
+.dashrow{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.dashrow .grow3{flex:3 1 520px;min-width:0}
+.dashrow .grow1{flex:1 1 280px;min-width:0}
+
+/* the counts / row-% switch, drawn as one segmented control */
+.seg{display:flex;border:1px solid var(--cl-primary-color);margin-left:auto}
+.seg button{
+  border:0;padding:5px 12px;cursor:pointer;font-family:var(--font-family);
+  font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;
+  background:#fff;color:var(--cl-primary-color);
+}
+.seg button.on{background:var(--cl-primary-color);color:#fff}
+
+.migctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.migctl label{
+  font-size:13px;color:var(--cl-off-text-color);display:inline-flex;align-items:center;gap:8px;
+}
+.migctl select{
+  font-family:var(--font-family);font-size:13px;padding:7px 10px;
+  border:1px solid var(--cl-border-color);border-radius:var(--border-radius);
+  background:#fff;color:var(--cl-text-color);
+}
+
+/* ---------- heat matrix ---------- */
+/* separate borders with spacing, so each cell reads as its own block */
+table.heat{border-collapse:separate;border-spacing:3px;width:100%;font-size:13px;
+  font-variant-numeric:tabular-nums}
+table.heat th{padding:6px 8px;font-weight:400;font-size:11px;color:var(--cl-off-text-color)}
+table.heat th.corner{text-align:left;white-space:nowrap}
+table.heat th.bh,table.heat th.rh{
+  font-size:12px;font-weight:700;color:var(--cl-primary-color);text-align:center;
+}
+table.heat th.rh{white-space:nowrap}
+table.heat th.cohort{text-align:right;white-space:nowrap}
+table.heat td.hc{padding:9px 8px;text-align:center;cursor:pointer;font-weight:600;
+  outline:2px solid transparent;outline-offset:-2px;transition:outline-color .2s ease}
+table.heat td.hc:hover{outline-color:var(--cl-action-color)}
+table.heat td.hc.on{outline-color:var(--cl-text-color)}
+table.heat td.cohort{padding:9px 8px;text-align:right;white-space:nowrap;
+  color:var(--cl-off-text-color)}
+
+.heatfoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:2px}
+.legend{display:flex;gap:3px}
+.legend span{width:26px;height:12px;display:block}
+
+/* ---------- cohort detail ---------- */
+.cohortbody{padding:15px;display:grid;gap:14px;align-content:start}
+.cohortbody .ck{display:grid;gap:4px}
+.cohortbody .kind{font-size:12px;color:var(--cl-off-text-color)}
+.cohortbody .title{font-size:18px;font-weight:700;color:var(--cl-primary-color)}
+.cbox{background:var(--cl-block-accent-color);border-radius:var(--border-radius);
+  padding:14px 16px;display:grid;gap:5px}
+.cbox .l,.cbox .s{font-size:12px;color:var(--cl-off-text-color)}
+.cbox .v{font-size:26px;line-height:1.1;font-weight:700;font-variant-numeric:tabular-nums}
+.cohortempty{padding:30px 20px;display:grid;gap:10px;justify-items:center;text-align:center}
+.cohortempty .ms-icon{font-size:34px;color:var(--cl-primary-color);opacity:.4}
+.cohortempty .t{font-size:14px;font-weight:600;color:var(--cl-primary-color)}
+.cohortempty .d{font-size:13px;color:var(--cl-off-text-color);text-wrap:pretty}
+
 /* ---------- AI analysis ---------- */
 .asec{display:grid;gap:8px}
 .ah{font-size:14px;font-weight:700;color:var(--cl-primary-color)}
