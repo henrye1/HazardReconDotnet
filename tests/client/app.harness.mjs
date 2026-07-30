@@ -17,13 +17,18 @@ console.log(`target: ${TARGET}\n`);
 function makeEl(id = "") {
   const kids = [];
   const el = {
-    id, className: "", innerHTML: "", textContent: "", value: "", src: "", href: "",
+    id, className: "", textContent: "", value: "", src: "", href: "",
     disabled: false, scrollTop: 0, scrollHeight: 0, parentNode: null,
     classList: {
       _s: new Set(),
       add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
       contains(c) { return this._s.has(c); },
     },
+    // assigning innerHTML replaces the children, as it does in a browser.
+    // loadModels() relies on this to clear stale <option>s before refilling.
+    _html: "",
+    get innerHTML() { return el._html; },
+    set innerHTML(v) { el._html = v; kids.length = 0; },
     appendChild(c) { kids.push(c); c.parentNode = el; return c; },
     remove() { const i = kids.indexOf(el); if (i >= 0) kids.splice(i, 1); },
     // handlers are recorded, not discarded, so a scenario can fire a real click
@@ -119,6 +124,9 @@ function boot(fetchImpl, initialStorage = {}) {
   const h = newCtx();
   h.ctx.fetch = fetchImpl;
   Object.assign(h.ctx.localStorage._d, initialStorage);
+  // signed in: /api/models needs a token, so the model picker only ever fills
+  // for a user with a session
+  h.ctx.supabase._session = { access_token: "tok-boot" };
   vm.runInContext(SRC, h.ctx);
   // give the module a RUN_ID the way discovery does
   h.ctx.showInventory({ run_id: "RID1", inventory: { root: "r", sets: [{ key: "K", label: "L" }] }, problems: [] });
@@ -431,7 +439,44 @@ async function scenarioM() {
     `msg='${h.$get("#auth-msg").textContent}'`);
 }
 
+/* ---------------- N: the picker recovers after a failed attempt ---------------- */
+async function scenarioN() {
+  console.log("N) a second loadModels after a failure re-enables and refills the picker");
+  const models = [
+    { id: "aaa", provider: 1, friendlyName: "Model A", modelName: "a" },
+    { id: "bbb", provider: 0, friendlyName: "Model B", modelName: "b" },
+  ];
+
+  // first call fails, second succeeds - exactly the pre-session 401 then
+  // post-sign-in retry that left the picker greyed out with duplicate options
+  let modelCalls = 0;
+  const h = bootAuth({ access_token: "tok-abc" }, (url) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/models") {
+      modelCalls++;
+      return Promise.resolve(modelCalls === 1
+        ? jsonRes(503, { error: "gateway down" })
+        : jsonRes(200, models));
+    }
+    return Promise.resolve(jsonRes(200, {}));
+  });
+  await tick(); await tick(); await tick();
+
+  check("first attempt disabled the picker", h.$get("#model").disabled === true);
+
+  h.ctx.loadModels();
+  await tick(); await tick(); await tick();
+
+  const sel = h.$get("#model");
+  check("picker is re-enabled", sel.disabled === false);
+  check("no duplicate Skip option", sel.children.length === 3,
+    `options=${sel.children.length} (${sel.children.map(o => o.textContent).join("|")})`);
+  check("the stale failure note is gone",
+    !/unavailable|down/i.test(h.$get("#model-note").textContent || ""),
+    `note='${h.$get("#model-note").textContent}'`);
+}
+
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
-                 scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM]) { await s(); console.log(""); }
+                 scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

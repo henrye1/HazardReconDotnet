@@ -171,9 +171,16 @@ function addModelOption(value, label) {
   return o;
 }
 
+/* Safe to call more than once: a sign-in after a failed attempt has to be able
+   to recover. Without the reset, a first failure latches sel.disabled on and no
+   later success clears it, leaving a greyed-out picker full of duplicate
+   "Skip AI analysis" rows. */
 function loadModels() {
   const sel = $("#model");
   const note = $("#model-note");
+  sel.innerHTML = "";
+  sel.disabled = false;
+  note.textContent = "";
   addModelOption("", "Skip AI analysis");
   return api("/api/models")
     .then(readJson)
@@ -195,7 +202,9 @@ function loadModels() {
 }
 
 $("#model").addEventListener("change", () => localStorage.setItem("hr_model", $("#model").value));
-loadModels();
+// no bare loadModels() here: /api/models needs a token, so it is called from the
+// session bootstrap and after sign-in. Calling it at load only ever produced a
+// guaranteed 401.
 
 function discover() {
   const paths = pathValues();
