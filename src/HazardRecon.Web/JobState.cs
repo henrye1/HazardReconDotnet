@@ -3,9 +3,14 @@ namespace HazardRecon.Web;
 internal class JobState
 {
     public string Id { get; set; } = string.Empty;
+
+    /// <summary>Owner of the run, taken from the token that created it.</summary>
+    public Guid UserId { get; set; }
+
     public string Status { get; set; } = "ready";
     public List<string> Roots { get; set; } = new();
     public string Outdir { get; set; } = string.Empty;
+    public string Indir { get; set; } = string.Empty;
     public List<Dictionary<string, string>> Log { get; set; } = new();
     public object? Result { get; set; }
     public string? Error { get; set; }

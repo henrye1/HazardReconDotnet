@@ -7,6 +7,9 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using HazardRecon.Web.Files;
+using HazardRecon.Web.Runs;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -41,6 +44,9 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
     public class AuthedFactory : WebApplicationFactory<Program>
     {
+        /// <summary>Shared so a test can inspect what the endpoint recorded.</summary>
+        public FakeRunStore RunStore { get; } = new();
+
         protected override IHost CreateHost(IHostBuilder builder)
         {
             builder.ConfigureHostConfiguration(config =>
@@ -61,6 +67,15 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
                     o.DefaultChallengeScheme = "Test";
                     o.DefaultScheme = "Test";
                 });
+
+                // in-memory stores: this suite is about the upload path, not
+                // about reaching a real Supabase project
+                services.RemoveAll<IRunStore>();
+                services.RemoveAll<IRunFileStore>();
+                services.RemoveAll<IFileStore>();
+                services.AddSingleton<IRunStore>(RunStore);
+                services.AddSingleton<IRunFileStore>(new FakeRunFileStore());
+                services.AddSingleton<IFileStore>(new FakeFileStore());
             });
 
             return base.CreateHost(builder);
@@ -145,6 +160,93 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpResponseMessage response = await client.PostAsync("/api/discover", form);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TestTheRunIsRecordedAgainstTheCaller()
+    {
+        HttpClient client = _factory.CreateClient();
+        int before = _factory.RunStore.Runs.Count;
+
+        using MultipartFormDataContent form = new();
+        AddFile(form, "set0", "MAR 2026/lgd_defaults.csv", "account\nC1\n");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // the row is what makes the run survive a restart; without it the
+        // database stays empty however many runs are started
+        Assert.Equal(before + 1, _factory.RunStore.Runs.Count);
+
+        RunRecord run = _factory.RunStore.Runs[^1];
+        Assert.Equal(Guid.Parse("11111111-1111-1111-1111-111111111111"), run.UserId);
+        Assert.Contains("MAR 2026", run.SetLabels);
+    }
+
+    [Fact]
+    public async Task TestTheRunIdIsTheDatabaseId()
+    {
+        // artifact paths and every later lookup key off this, so a locally
+        // invented id would orphan the row
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddFile(form, "set0", "APR 2026/lgd_defaults.csv", "account\nD1\n");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Contains(_factory.RunStore.Runs[^1].Id.ToString(), body);
+    }
+
+    [Fact]
+    public async Task TestTheDailyRunQuotaIsEnforced()
+    {
+        HttpClient client = _factory.CreateClient();
+        _factory.RunStore.RecentCount = 20;
+
+        try
+        {
+            using MultipartFormDataContent form = new();
+            AddFile(form, "set0", "MAY 2026/lgd_defaults.csv", "account\nE1\n");
+
+            HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+            string body = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+            Assert.Contains("limit is 20", body);
+        }
+        finally
+        {
+            _factory.RunStore.RecentCount = 0;
+        }
+    }
+
+    [Fact]
+    public async Task TestAnotherUsersRunIsReportedMissingNotForbidden()
+    {
+        // a 403 would confirm the run exists; 404 tells an outsider nothing
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync($"/api/runs/{Guid.NewGuid()}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TestHistoryListsOnlyTheCallersRuns()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        // a run belonging to somebody else must never appear
+        await _factory.RunStore.CreateAsync(Guid.NewGuid(), new[] { "SOMEONE ELSE" });
+
+        HttpResponseMessage response = await client.GetAsync("/api/runs");
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.DoesNotContain("SOMEONE ELSE", body);
     }
 
     [Fact]

@@ -5,6 +5,8 @@ using HazardRecon.Core.Llm;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
+using HazardRecon.Web.Files;
+using HazardRecon.Web.Runs;
 using HazardRecon.Web.Supabase;
 using HazardRecon.Web.Uploads;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -57,6 +59,17 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+// Registered rather than newed up inline so a test host can substitute fakes -
+// which is what IRunStore and IFileStore exist for.
+builder.Services.AddSingleton(supabaseOptions);
+builder.Services.AddSingleton(sp => new SupabaseRestClient(sp.GetRequiredService<SupabaseOptions>()));
+builder.Services.AddSingleton<IRunStore>(sp => new SupabaseRunStore(sp.GetRequiredService<SupabaseRestClient>()));
+builder.Services.AddSingleton<IRunFileStore>(sp => new SupabaseRunFileStore(sp.GetRequiredService<SupabaseRestClient>()));
+builder.Services.AddSingleton<IFileStore>(sp => new SupabaseFileStore(
+    sp.GetRequiredService<SupabaseRestClient>(), sp.GetRequiredService<SupabaseOptions>()));
+builder.Services.AddSingleton(sp => new RunPersister(
+    sp.GetRequiredService<IFileStore>(), sp.GetRequiredService<IRunFileStore>()));
+
 // Kestrel refuses bodies over ~30 MB by default and the form reader caps
 // multipart at 128 MB, so both have to be lifted to whatever the upload limit
 // actually is - otherwise a folder inside the limit still dies as a 413.
@@ -92,6 +105,28 @@ string runsDir = Path.Combine(baseDir, "runs");
 Directory.CreateDirectory(runsDir);
 
 var jobs = new ConcurrentDictionary<string, JobState>();
+
+// resolved after Build so a test host's replacements win
+IRunStore runStore = app.Services.GetRequiredService<IRunStore>();
+IRunFileStore runFileStore = app.Services.GetRequiredService<IRunFileStore>();
+IFileStore fileStore = app.Services.GetRequiredService<IFileStore>();
+RunPersister persister = app.Services.GetRequiredService<RunPersister>();
+
+// A run only lives in this process, so anything still flagged running was killed
+// by a restart and will never finish. Do it once, at boot.
+try
+{
+    int interrupted = await runStore.MarkRunningAsInterruptedAsync();
+    if (interrupted > 0)
+        Console.WriteLine($" i marked {interrupted} interrupted run(s) from a previous process");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($" ! could not reconcile interrupted runs: {ex.Message}");
+}
+
+/// <summary>20 runs per rolling 24 hours, per the spec's abuse guard.</summary>
+const int RunsPerDay = 20;
 
 // POST /api/discover - receives the picked folders as an upload. A browser
 // cannot disclose a folder's path, so the files themselves are sent and
@@ -132,7 +167,23 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         items.Add(new UploadItem(setIndex, file.FileName, file.OpenReadStream(), file.Length));
     }
 
-    string rid = DateTime.Now.ToString("yyyyMMdd-HHmmss-") + Guid.NewGuid().ToString("N")[..6];
+    Guid? userId = SupabaseJwt.UserId(ctx.User);
+    if (userId == null) return Results.Unauthorized();
+
+    int recent = await runStore.CountSinceAsync(userId.Value, DateTimeOffset.UtcNow.AddDays(-1));
+    if (recent >= RunsPerDay)
+    {
+        return Results.Json(
+            new { error = $"You have started {recent} runs in the last 24 hours; the limit is {RunsPerDay}." },
+            statusCode: 429);
+    }
+
+    // the run id is the database's, so every artifact path and every later
+    // lookup keys off the same value
+    RunRecord created = await runStore.CreateAsync(
+        userId.Value, items.Select(i => i.RelativePath.Split('/')[0]).Distinct().ToList());
+
+    string rid = created.Id.ToString();
     string runRoot = Path.Combine(runsDir, rid);
     string outdir = Path.Combine(runRoot, "output");
     string indir = Path.Combine(runRoot, "input");
@@ -143,6 +194,7 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     if (!upload.Ok)
     {
         Directory.Delete(runRoot, recursive: true);
+        await runStore.UpdateStatusAsync(created.Id, "error", upload.Error);
         return Results.BadRequest(new { error = upload.Error });
     }
 
@@ -151,11 +203,27 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     jobs[rid] = new JobState
     {
         Id = rid,
+        UserId = userId.Value,
         Status = "ready",
         Roots = paths,
         Outdir = outdir,
+        Indir = indir,
         Started = DateTime.Now.ToString("o")
     };
+
+    // the uploaded inputs go up in the background: the user is waiting on
+    // discovery, and a slow transfer must not hold up the inventory
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await persister.PersistDirectoryAsync(userId.Value, created.Id, "input", indir);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($" ! could not store inputs for {rid}: {ex.Message}");
+        }
+    });
 
     var probe = new ProbeLogger();
     var discoverer = new InputDiscoverer();
@@ -202,7 +270,11 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
     using var doc = JsonDocument.Parse(bodyStr);
     string? rid = doc.RootElement.TryGetProperty("run_id", out var rProp) ? rProp.GetString() : null;
 
-    if (string.IsNullOrEmpty(rid) || !jobs.TryGetValue(rid, out var job))
+    Guid? runUser = SupabaseJwt.UserId(ctx.User);
+    if (runUser == null) return Results.Unauthorized();
+
+    // 404 rather than 403 for someone else's run: a 403 confirms it exists
+    if (string.IsNullOrEmpty(rid) || !jobs.TryGetValue(rid, out var job) || job.UserId != runUser.Value)
         return Results.NotFound(new { error = "Unknown run - please run discovery again." });
 
     if (job.Status == "running")
@@ -210,6 +282,10 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
 
     string? modelId = doc.RootElement.TryGetProperty("model_id", out var modelProp) ? modelProp.GetString() : null;
     job.ModelId = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
+
+    Guid runGuid = Guid.Parse(rid);
+    await runStore.SetModelAsync(runGuid, job.ModelId);
+    await runStore.UpdateStatusAsync(runGuid, "running", null);
 
     job.Status = "running";
     job.Log.Clear();
@@ -226,7 +302,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
         });
 
     var capturedJob = job;
-    _ = Task.Run(() =>
+    _ = Task.Run(async () =>
     {
         try
         {
@@ -284,6 +360,22 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 memo = outResult.Memo
             };
             capturedJob.Status = "done";
+
+            // Same isolation as the chat payload above: the run is finished and
+            // its artifacts are on disk. A storage or database failure here is
+            // reported, never allowed to downgrade a completed run to an error.
+            try
+            {
+                RunPersister.PersistOutcome stored = await persister.PersistDirectoryAsync(
+                    capturedJob.UserId, runGuid, "output", capturedJob.Outdir);
+
+                if (stored.Failed.Count > 0)
+                    Logger($"Could not store {stored.Failed.Count} artifact(s): {string.Join(", ", stored.Failed)}", "warn");
+            }
+            catch (Exception storeEx)
+            {
+                Logger($"Could not store artifacts: {storeEx.GetType().Name}: {storeEx.Message}", "warn");
+            }
         }
         catch (Exception ex)
         {
@@ -291,15 +383,30 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
             capturedJob.Status = "error";
             Logger(capturedJob.Error, "warn");
         }
+
+        try
+        {
+            await runStore.SaveCompletionAsync(
+                runGuid, capturedJob.Status, capturedJob.Error,
+                capturedJob.Result, capturedJob.AnalysisPayload, capturedJob.Log);
+        }
+        catch (Exception saveEx)
+        {
+            Logger($"Could not save the run: {saveEx.GetType().Name}: {saveEx.Message}", "warn");
+        }
     });
 
     return Results.Ok(new { run_id = rid, status = "running" });
 }).RequireAuthorization();
 
 // GET /api/job/{rid}
-app.MapGet("/api/job/{rid}", (string rid) =>
+app.MapGet("/api/job/{rid}", (string rid, HttpContext ctx) =>
 {
-    if (!jobs.TryGetValue(rid, out var job))
+    Guid? jobUser = SupabaseJwt.UserId(ctx.User);
+    if (jobUser == null) return Results.Unauthorized();
+
+    // another user's run is reported missing, not forbidden
+    if (!jobs.TryGetValue(rid, out var job) || job.UserId != jobUser.Value)
         return Results.NotFound(new { error = "Unknown run" });
 
     return Results.Ok(new
@@ -322,7 +429,10 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     string? rid = doc.RootElement.TryGetProperty("run_id", out var rProp) ? rProp.GetString() : null;
     string message = doc.RootElement.TryGetProperty("message", out var mProp) ? (mProp.GetString() ?? "").Trim() : "";
 
-    if (string.IsNullOrEmpty(rid) || !jobs.TryGetValue(rid, out var job))
+    Guid? chatUser = SupabaseJwt.UserId(ctx.User);
+    if (chatUser == null) return Results.Unauthorized();
+
+    if (string.IsNullOrEmpty(rid) || !jobs.TryGetValue(rid, out var job) || job.UserId != chatUser.Value)
         return Results.NotFound(new { error = "Unknown run - please run reconciliation first." });
 
     if (job.Status != "done")
@@ -340,9 +450,16 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
 }).RequireAuthorization();
 
 // GET /runs/{rid}/output/{filename}
-app.MapGet("/runs/{rid}/output/{filename}", (string rid, string filename) =>
+app.MapGet("/runs/{rid}/output/{filename}", async (string rid, string filename, HttpContext ctx) =>
 {
-    string outdir = jobs.TryGetValue(rid, out var job) ? job.Outdir : Path.Combine(runsDir, rid, "output");
+    Guid? fileUser = SupabaseJwt.UserId(ctx.User);
+    if (fileUser == null) return Results.Unauthorized();
+
+    // an unowned run is indistinguishable from a missing one
+    if (jobs.TryGetValue(rid, out var job) && job.UserId != fileUser.Value)
+        return Results.NotFound();
+
+    string outdir = job?.Outdir ?? Path.Combine(runsDir, rid, "output");
     string filePath = Path.GetFullPath(Path.Combine(outdir, filename));
 
     // keep the request inside the run's own output folder
@@ -350,15 +467,27 @@ app.MapGet("/runs/{rid}/output/{filename}", (string rid, string filename) =>
     if (!filePath.StartsWith(outdirFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         return Results.NotFound();
 
-    if (!File.Exists(filePath)) return Results.NotFound();
+    if (File.Exists(filePath))
+    {
+        // The dashboard is shown in an iframe, so HTML has to be served inline with
+        // its real content type - as an octet-stream attachment the frame renders
+        // blank. Everything else stays a download.
+        if (filename.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            return Results.File(filePath, contentType: "text/html; charset=utf-8");
 
-    // The dashboard is shown in an iframe, so HTML has to be served inline with
-    // its real content type - as an octet-stream attachment the frame renders
-    // blank. Everything else stays a download.
-    if (filename.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
-        return Results.File(filePath, contentType: "text/html; charset=utf-8");
+        return Results.File(filePath, contentType: "application/octet-stream", fileDownloadName: filename);
+    }
 
-    return Results.File(filePath, contentType: "application/octet-stream", fileDownloadName: filename);
+    // Not on disk: either a restart wiped it or this is a run from an earlier
+    // process. Fall back to object storage, which is the whole point of keeping
+    // the artifacts there.
+    if (!Guid.TryParse(rid, out Guid storedRunId)) return Results.NotFound();
+
+    RunFileRecord? record = await runFileStore.FindOutputAsync(storedRunId, fileUser.Value, filename);
+    if (record == null) return Results.NotFound();
+
+    string signed = await fileStore.CreateSignedUrlAsync(record.StoragePath, 60);
+    return Results.Redirect(signed);
 }).RequireAuthorization();
 
 // GET /api/models
@@ -384,6 +513,53 @@ app.MapGet("/api/models", async () =>
     {
         return Results.Json(new { error = $"Could not list models - {ex.Message}" }, statusCode: 503);
     }
+}).RequireAuthorization();
+
+// GET /api/runs - the caller's history, newest first
+app.MapGet("/api/runs", async (HttpContext ctx) =>
+{
+    Guid? historyUser = SupabaseJwt.UserId(ctx.User);
+    if (historyUser == null) return Results.Unauthorized();
+
+    IReadOnlyList<RunRecord> runs = await runStore.ListAsync(historyUser.Value);
+
+    return Results.Ok(runs.Select(r => new
+    {
+        id = r.Id,
+        status = r.Status,
+        model_id = r.ModelId,
+        set_labels = r.SetLabels,
+        created_at = r.CreatedAt,
+        finished_at = r.FinishedAt,
+        error = r.Error,
+        inputs_purged = r.InputsPurgedAt != null
+    }));
+}).RequireAuthorization();
+
+// GET /api/runs/{rid} - one past run in full, so it can be reopened
+app.MapGet("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
+{
+    Guid? historyUser = SupabaseJwt.UserId(ctx.User);
+    if (historyUser == null) return Results.Unauthorized();
+
+    if (!Guid.TryParse(rid, out Guid runId)) return Results.NotFound(new { error = "Unknown run" });
+
+    RunRecord? run = await runStore.GetAsync(runId, historyUser.Value);
+    if (run == null) return Results.NotFound(new { error = "Unknown run" });
+
+    return Results.Ok(new
+    {
+        id = run.Id,
+        status = run.Status,
+        model_id = run.ModelId,
+        set_labels = run.SetLabels,
+        created_at = run.CreatedAt,
+        finished_at = run.FinishedAt,
+        error = run.Error,
+        log = run.Log,
+        result = run.Result,
+        inputs_purged = run.InputsPurgedAt != null
+    });
 }).RequireAuthorization();
 
 // POST /api/session - hands the verified token back as a cookie so the browser

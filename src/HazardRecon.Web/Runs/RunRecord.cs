@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace HazardRecon.Web.Runs;
@@ -25,6 +26,18 @@ public class RunRecord
 
     [JsonPropertyName("error")]
     public string? Error { get; set; }
+
+    [JsonPropertyName("log")]
+    public JsonElement? Log { get; set; }
+
+    [JsonPropertyName("result")]
+    public JsonElement? Result { get; set; }
+
+    [JsonPropertyName("analysis_payload")]
+    public JsonElement? AnalysisPayload { get; set; }
+
+    [JsonPropertyName("inputs_purged_at")]
+    public DateTimeOffset? InputsPurgedAt { get; set; }
 
     [JsonPropertyName("created_at")]
     public DateTimeOffset CreatedAt { get; set; }

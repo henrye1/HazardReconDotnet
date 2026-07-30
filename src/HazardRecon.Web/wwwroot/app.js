@@ -67,7 +67,7 @@ function startSession() {
     })
     .then((res) => {
       const session = res && res.data ? res.data.session : null;
-      if (session) { TOKEN = session.access_token; hideGate(); openDownloadSession(); loadModels(); }
+      if (session) { TOKEN = session.access_token; hideGate(); openDownloadSession(); loadModels(); loadHistory(); }
       else { showGate(""); }
     });
 }
@@ -94,6 +94,7 @@ $("#btn-signin").addEventListener("click", () => {
     hideGate();
     openDownloadSession();
     loadModels();
+    loadHistory();
   });
 });
 
@@ -115,6 +116,49 @@ $("#btn-signout").addEventListener("click", () => {
 });
 
 startSession();
+
+/* ---------- run history ---------- */
+function loadHistory() {
+  return api("/api/runs")
+    .then(readJson)
+    .then(({ ok, j }) => {
+      if (!ok || !Array.isArray(j) || j.length === 0) {
+        $("#card-history").classList.add("hide");
+        return;
+      }
+
+      $("#card-history").classList.remove("hide");
+      $("#history-table").innerHTML =
+        "<tr><th>When</th><th>Folders</th><th>Status</th><th></th></tr>" +
+        j.map(r => {
+          const when = new Date(r.created_at).toLocaleString();
+          const labels = (r.set_labels || []).join(", ") || "&mdash;";
+          const reopen = r.status === "done"
+            ? `<button class="btn" data-run="${r.id}">Open</button>`
+            : "";
+          return `<tr><td>${when}</td><td>${labels}</td>` +
+                 `<td>${r.status}</td><td>${reopen}</td></tr>`;
+        }).join("");
+
+      Array.from($("#history-table").querySelectorAll
+        ? $("#history-table").querySelectorAll("button")
+        : []).forEach(b => b.addEventListener("click", () => openRun(b.getAttribute("data-run"))));
+    })
+    .catch(() => { /* history is a convenience; never block the app on it */ });
+}
+
+/* Reopens a stored run: its summaries, downloads and dashboard come back from
+   the database and object storage, so they survive a restart. */
+function openRun(id) {
+  return api("/api/runs/" + id)
+    .then(readJson)
+    .then(({ ok, j }) => {
+      if (!ok || !j || !j.result) return;
+      RUN_ID = j.id;
+      showResults(j.result);
+      $("#card-chat").classList.remove("hide");
+    });
+}
 
 /* ---------- step 1: folder paths ---------- */
 const MAX_SETS = 4;
@@ -402,11 +446,13 @@ function poll() {
       setBadge("complete", "done");
       $("#btn-run").disabled = false;
       showResults(j.result);
+      loadHistory();
     } else if (j.status === "error") {
       stopPolling();
       setBadge("error", "err");
       $("#btn-run").disabled = false;
       showError($("#card-run"), j.error || "The run failed.");
+      loadHistory();
     }
   }).catch(() => pollFailed("Lost contact with the server while the run was in progress."));
 }

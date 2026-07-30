@@ -69,6 +69,35 @@ public class SupabaseRunStore : IRunStore
             Json(patch), ReturnRow, ct);
     }
 
+    public async Task SetModelAsync(Guid runId, string? modelId, CancellationToken ct = default)
+    {
+        await _rest.SendAsync(HttpMethod.Patch, $"{Table}?id=eq.{runId}",
+            Json(new Dictionary<string, object?> { ["model_id"] = modelId }), ReturnRow, ct);
+    }
+
+    public async Task SaveCompletionAsync(
+        Guid runId,
+        string status,
+        string? error,
+        object? result,
+        object? analysisPayload,
+        object log,
+        CancellationToken ct = default)
+    {
+        Dictionary<string, object?> patch = new()
+        {
+            ["status"] = status,
+            ["error"] = error,
+            ["result"] = result,
+            ["analysis_payload"] = analysisPayload,
+            ["log"] = log,
+            ["finished_at"] = DateTimeOffset.UtcNow
+        };
+
+        await _rest.SendAsync(HttpMethod.Patch, $"{Table}?id=eq.{runId}",
+            Json(patch), ReturnRow, ct);
+    }
+
     public async Task<int> CountSinceAsync(Guid userId, DateTimeOffset since, CancellationToken ct = default)
     {
         // escaped: an unescaped '+' in the offset would arrive at PostgREST as a space

@@ -14,6 +14,23 @@ public interface IRunStore
 
     Task UpdateStatusAsync(Guid runId, string status, string? error, CancellationToken ct = default);
 
+    /// <summary>Records the model chosen for a run, before it starts.</summary>
+    Task SetModelAsync(Guid runId, string? modelId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Writes the finished run in one call: status, log, summaries and the chat
+    /// payload. Done once at the end rather than per log line, which would cost a
+    /// round trip for every message the engine emits.
+    /// </summary>
+    Task SaveCompletionAsync(
+        Guid runId,
+        string status,
+        string? error,
+        object? result,
+        object? analysisPayload,
+        object log,
+        CancellationToken ct = default);
+
     Task<int> CountSinceAsync(Guid userId, DateTimeOffset since, CancellationToken ct = default);
 
     /// <summary>
