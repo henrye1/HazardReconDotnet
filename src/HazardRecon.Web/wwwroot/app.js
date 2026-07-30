@@ -957,16 +957,188 @@ function renderLogsTab(res) {
 
 /* ---------- dashboard tab ---------- */
 function renderDashboardTab(res) {
-  // cache-busted: a rerun writes the same filename
-  const url = outputUrl(res.dashboard);
-  $("#res-frame").src = url;
-  $("#res-open").href = url;
+  // the engine still writes the standalone file; the link opens it
+  $("#res-open").href = outputUrl(res.dashboard);
 
   renderDashTiles(res);
   renderDashCommentary(res);
   renderDashAi(res);
   renderDashChecks(res);
   renderDashMatrix(res);
+  renderDashEngine(res);
+  renderSetDetail(res);
+}
+
+/* ---------- engine model outputs ---------- */
+/* The scenario's own fitted probabilities, shown on the same heat scale as the
+   rebuilt matrix so the two can be read against each other. */
+function renderDashEngine(res) {
+  const d = (res.dashboard_sets || []).find(s => s.hazard && s.hazard.length);
+
+  if (!d) {
+    ["#dash-hazard", "#dash-pd", "#dash-lgd"].forEach(s => {
+      $(s).innerHTML = "";
+      $(s).classList.add("hide");
+    });
+    return;
+  }
+  ["#dash-hazard", "#dash-pd", "#dash-lgd"].forEach(s => $(s).classList.remove("hide"));
+
+  renderHazard(d);
+  renderPdBuckets(d);
+  renderLgd(d);
+}
+
+/* A probability, as a percentage that stays honest at the small end. In the
+   matrices an impossible transition reads as a dash, but in the PD table a zero
+   is a real measured figure, so zeroes are spelled out there instead. */
+function prob(v, zeroAsNumber) {
+  if (v == null) return "&ndash;";
+  const pct = v * 100;
+  if (pct === 0) return zeroAsNumber ? "0.00%" : "&ndash;";
+  if (pct < 0.01) return "&lt;0.01%";
+  return pct.toFixed(2) + "%";
+}
+
+function renderHazard(d) {
+  const rows = d.hazard || [];
+  const peak = Math.max(...rows.flat().filter(v => v != null), 0.0001);
+
+  $("#dash-hazard").innerHTML = `
+    <div class="cardhead wrapped">
+      <span>Engine hazard-rate matrix</span>
+      <span class="sub">scenario.json — the model's own fitted transition probabilities</span>
+    </div>
+    <div class="cardbody" style="display:grid;gap:12px">
+      <p class="hint" style="margin:0">Column 5 is the default state, column 6 is closed / settled;
+        buckets 5 and 6 are absorbing.</p>
+      <div style="overflow-x:auto">
+        <table class="heat static">
+          <thead><tr><th></th>${MIG_BUCKETS.map(b => `<th class="bh">${b}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((cells, i) => `<tr><th class="rh">${MIG_BUCKETS[i]}</th>` +
+            cells.map(v => {
+              const stop = heatOf(v, peak);
+              return `<td class="hc" style="background:${stop.bg};color:${stop.fg}">${prob(v)}</td>`;
+            }).join("") + `</tr>`).join("")}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/* Per bucket: the chance of defaulting, and the cohort the engine fitted it on.
+   Buckets 5 and 6 are absorbing, which is worth saying rather than leaving the
+   reader to infer it from a 100%. */
+function renderPdBuckets(d) {
+  const hazard = d.hazard || [];
+  const cohort = d.cohort || [];
+  // column 5 (index 4) is the default state
+  const defaultCol = 4;
+
+  const rows = hazard.map((row, i) => {
+    const hz = row[defaultCol];
+    const co = (cohort[i] || [])[defaultCol];
+    const absorbing = i >= 4;
+    return `<tr>
+      <td class="nowrap" style="font-weight:600">Bucket ${MIG_BUCKETS[i]}
+        ${absorbing ? `<span class="tag">absorbing</span>` : ""}</td>
+      <td class="num">
+        <div>${prob(hz, true)}</div>
+        <div class="bar"><span style="width:${Math.round((hz || 0) * 100)}%"></span></div>
+      </td>
+      <td class="num">${prob(co, true)}</td>
+    </tr>`;
+  }).join("");
+
+  $("#dash-pd").innerHTML = `
+    <div class="cardhead"><span>Engine model outputs — PD by bucket</span></div>
+    <table class="grid tight figures">
+      <thead><tr><th>Bucket</th><th class="num">Hazard</th><th class="num">Cohort</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderLgd(d) {
+  const rows = d.lgd || [];
+  if (!rows.length) { $("#dash-lgd").innerHTML = ""; $("#dash-lgd").classList.add("hide"); return; }
+
+  // the term columns are whatever the engine produced, in order
+  const width = rows[0].values.length;
+  const heads = ["0 days", "30 days", "60 days", "90 days"].slice(0, width);
+  while (heads.length < width) heads.push("+" + (heads.length * 30) + " days");
+
+  $("#dash-lgd").innerHTML = `
+    <div class="cardhead"><span>LGD term structure</span></div>
+    <div class="cardbody" style="padding:15px 16px 0">
+      <p class="hint" style="margin:0">Loss given default by days since default, as produced by the
+        engine — recovery is effectively exhausted by 60&ndash;90 days.</p>
+    </div>
+    <table class="grid tight figures" style="margin-top:12px">
+      <thead><tr><th>Event type</th>${heads.map(h => `<th class="num">${h}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map(r => `<tr><td style="font-weight:600">${escapeHtml(r.name)}</td>` +
+        r.values.map(v => `<td class="num">${prob(v)}</td>`).join("") + `</tr>`).join("")}</tbody>
+    </table>`;
+}
+
+/* ---------- per-set detail ---------- */
+function renderSetDetail(res) {
+  const dash = res.dashboard_sets || [];
+  if (!dash.length) { $("#dash-setdetail").innerHTML = ""; return; }
+
+  $("#dash-setdetail").innerHTML = dash.map(d => {
+    const untraced = (d.top_untraced || []).map(u => `<tr>
+      <td class="num" style="text-align:left">${escapeHtml(u.account)}</td>
+      <td>${escapeHtml(u.cohort_date)}</td>
+      <td class="num">${escapeHtml(u.rating)}</td>
+      <td class="num">${escapeHtml(u.amount)}</td></tr>`).join("");
+
+    const buckets = (d.last_buckets || []).map(b => `<tr>
+      <td>${escapeHtml(b.bucket)}</td>
+      <td class="num">${fmt(b.accounts)}</td>
+      <td class="num">${b.share.toFixed(1)}%</td>
+      <td class="num">${escapeHtml(b.amount)}</td></tr>`).join("");
+
+    const exceptions = (d.wo_exceptions || []).map(w => `<tr>
+      <td class="num" style="text-align:left">${escapeHtml(w.account)}</td>
+      <td class="num">${escapeHtml(w.amount)}</td>
+      <td>${escapeHtml(w.date)}</td>
+      <td><span class="chip error">In window</span></td>
+      <td class="num">${escapeHtml(w.last_bucket)}</td></tr>`).join("");
+
+    const block = (title, note, head, body) => body ? `
+      <div class="sdblock">
+        <span class="sdh">${title}</span>
+        ${note ? `<p class="hint" style="margin:0">${note}</p>` : ""}
+        <div style="overflow-x:auto"><table class="grid tight figures">
+          <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+      </div>` : "";
+
+    return `
+      <div class="card">
+        <div class="cardhead strong wrapped">
+          <span>Set detail: ${escapeHtml(d.key)}</span>
+          <span class="sub">${escapeHtml(d.label || "")}</span>
+        </div>
+        <div class="cardbody" style="display:grid;gap:24px">
+          ${block("Top untraced defaults", "",
+            `<th>Account</th><th>Cohort date</th><th class="num">Rating</th>` +
+            `<th class="num">Default amount</th>`, untraced)}
+          <div class="dashrow">
+            ${buckets ? `<div class="grow1" style="display:grid;gap:10px">
+              ${block("Where the engine last had these accounts",
+                "Bucket 4 is the worst non-default bucket, so a concentration there means accounts " +
+                "were written off straight out of bucket 4 without ever moving to the default state.",
+                `<th>Last bucket seen</th><th class="num">Accounts</th><th class="num">Share</th>` +
+                `<th class="num">Value written off</th>`, buckets)}
+            </div>` : ""}
+            ${exceptions ? `<div class="grow2" style="display:grid;gap:10px">
+              ${block("Write-offs not defaulted — top exceptions", "",
+                `<th>Account</th><th class="num">Write-off amount</th><th>Last write-off date</th>` +
+                `<th>Window status</th><th class="num">Last bucket</th>`, exceptions)}
+            </div>` : ""}
+          </div>
+        </div>
+      </div>`;
+  }).join("");
 }
 
 /* ---------- migration matrix ---------- */

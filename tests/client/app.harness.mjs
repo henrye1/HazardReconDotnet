@@ -817,9 +817,10 @@ async function scenarioU() {
 
   // dashboard
   h.$get("#tab-btn-dashboard")._fire("click");
-  check("the dashboard is embedded", /reconciliation_dashboard\.html/.test(h.$get("#res-frame").src),
-    `src='${h.$get("#res-frame").src}'`);
-  check("the open-in-a-tab link matches", /reconciliation_dashboard\.html/.test(h.$get("#res-open").href));
+  // the tab draws the dashboard natively now and links out to the engine's file
+  check("the open-in-a-tab link points at the engine's file",
+    /reconciliation_dashboard\.html/.test(h.$get("#res-open").href),
+    `href='${h.$get("#res-open").href}'`);
 
   // files
   h.$get("#tab-btn-files")._fire("click");
@@ -1076,6 +1077,92 @@ async function scenarioDE() {
   check("monthly totals are listed", /2026-01[\s\S]*?27/.test(mo) && /2026-02[\s\S]*?12/.test(mo));
 }
 
+/* ---------------- DG: engine outputs and the per-set detail ---------------- */
+async function scenarioDG() {
+  console.log("DG) the hazard matrix, PD by bucket, LGD and the set detail");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.dashboard_sets = [Object.assign(JSON.parse(JSON.stringify(DASH_SET_FIX)), {
+    hazard: [
+      [0.00004, 0, 0, 0, 0.0251, 0.9748],
+      [0, 0.00004, 0, 0, 0.2684, 0.7315],
+      [0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0.8949, 0.1051],
+      [0, 0, 0, 0, 1, 0],
+      [0, 0, 0, 0, 0, 1],
+    ],
+    cohort: [
+      [0, 0, 0, 0, 0.0252, 0], [0, 0, 0, 0, 0.2685, 0], [0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0.8949, 0], [0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0],
+    ],
+    lgd: [
+      { name: "Lifetime", values: [0.9375, 0.9588, 0.9819, 1.0] },
+      { name: "TwelveMonthSingle", values: [0.9375, 0.9588, 0.9819, 1.0] },
+    ],
+    last_buckets: [{ bucket: "Bucket 6", accounts: 4, share: 100.0, amount: "R 1.50" }],
+    top_untraced: [
+      { account: "1248927298", cohort_date: "2026-04-30", rating: "5", amount: "R 9,519.38" },
+      { account: "27458", cohort_date: "2026-04-30", rating: "5", amount: "R 9,396.13" },
+    ],
+    wo_exceptions: [
+      { account: "1251622562", amount: "R 0.77", date: "30 Apr 2026", window: "IN WINDOW", last_bucket: "6" },
+    ],
+  })];
+  h.ctx.showResults(res, []);
+
+  const hz = h.$get("#dash-hazard").innerHTML;
+  check("the hazard matrix is titled", /Engine hazard-rate matrix/.test(hz));
+  check("a tiny probability does not round to zero", /&lt;0\.01%/.test(hz),
+    "0.000004 should read as <0.01%");
+  check("an impossible transition reads as a dash", /&ndash;/.test(hz));
+  check("a real probability is shown to two places", /97\.48%/.test(hz));
+  check("the engine matrix is not clickable", /class="heat static"/.test(hz));
+
+  const pd = h.$get("#dash-pd").innerHTML;
+  check("PD is listed per bucket", (pd.match(/Bucket \d/g) || []).length === 6,
+    `buckets=${(pd.match(/Bucket \d/g) || []).length}`);
+  check("the absorbing buckets are tagged", (pd.match(/class="tag"/g) || []).length === 2);
+  check("a hazard bar is drawn", /class="bar"><span style="width:89%"/.test(pd),
+    "0.8949 should give an 89% bar");
+  check("a zero PD is spelled out rather than dashed", /0\.00%/.test(pd),
+    "in the PD table a zero is a measured figure");
+
+  const lgd = h.$get("#dash-lgd").innerHTML;
+  check("LGD names its terms", /0 days/.test(lgd) && /90 days/.test(lgd));
+  check("LGD lists each event type", /Lifetime/.test(lgd) && /TwelveMonthSingle/.test(lgd));
+  check("LGD values are percentages", /93\.75%/.test(lgd) && /100\.00%/.test(lgd));
+
+  const sd = h.$get("#dash-setdetail").innerHTML;
+  check("the set detail is headed by the set", /Set detail: JUN2026/.test(sd));
+  check("top untraced defaults are listed", /1248927298/.test(sd) && /R 9,519\.38/.test(sd));
+  check("the last-bucket census is shown", /Where the engine last had these accounts/.test(sd) &&
+    /100\.0%/.test(sd));
+  check("the write-off exceptions are shown", /1251622562/.test(sd) &&
+    /class="chip error">In window/.test(sd));
+}
+
+/* ---------------- DH: a run whose scenario had no matrices ---------------- */
+async function scenarioDH() {
+  console.log("DH) a run with no engine matrices leaves those cards out");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.dashboard_sets = [JSON.parse(JSON.stringify(DASH_SET_FIX))];  // no hazard, no lgd
+  h.ctx.showResults(res, []);
+
+  check("the hazard card is hidden", h.$get("#dash-hazard").classList.contains("hide"));
+  check("the PD card is hidden", h.$get("#dash-pd").classList.contains("hide"));
+  check("the LGD card is hidden", h.$get("#dash-lgd").classList.contains("hide"));
+  check("the set detail omits tables it has no rows for",
+    !/Top untraced defaults/.test(h.$get("#dash-setdetail").innerHTML));
+  check("the tables above still render", /15,813/.test(h.$get("#dash-check1").innerHTML));
+}
+
 /* ---------------- DF: a run with no scored file has no matrix ---------------- */
 async function scenarioDF() {
   console.log("DF) a run with no migration data hides the matrix rather than drawing an empty one");
@@ -1237,6 +1324,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
