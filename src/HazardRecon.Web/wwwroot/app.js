@@ -178,6 +178,11 @@ function setStep(n) {
   }
 }
 
+$("#run-search").addEventListener("input", () => {
+  RUN_FILTER = $("#run-search").value || "";
+  renderHistoryRows();
+});
+
 $("#nav-runs").addEventListener("click", () => showScreen("runs"));
 $("#nav-new").addEventListener("click", resetWizard);
 $("#btn-new-run").addEventListener("click", resetWizard);
@@ -185,9 +190,13 @@ $("#btn-cancel").addEventListener("click", () => showScreen("runs"));
 
 /* ---------- run history ---------- */
 const STATUS_LABEL = {
-  done: "complete", running: "running", error: "failed",
-  interrupted: "interrupted", ready: "draft",
+  done: "Completed", running: "Running", error: "Failed",
+  interrupted: "Interrupted", ready: "Draft",
 };
+
+// what the search box is filtering on; the list is fetched once and filtered here
+let RUNS = [];
+let RUN_FILTER = "";
 
 function renderStats(runs) {
   const done = runs.filter(r => r.status === "done");
@@ -210,7 +219,7 @@ function renderStats(runs) {
   ];
 
   $("#stat-tiles").innerHTML = tiles
-    .map(([label, value]) => `<div class="tile"><span class="num">${value}</span><p class="lbl">${label}</p></div>`)
+    .map(([label, value]) => `<div class="tile"><p class="lbl">${label}</p><span class="num">${value}</span></div>`)
     .join("");
 }
 
@@ -238,10 +247,27 @@ function loadHistory() {
       renderStats(runs);
       renderTrend(runs);
 
-      $("#history-empty").classList.toggle("hide", runs.length > 0);
-      $("#history-table").classList.toggle("hide", runs.length === 0);
-      if (runs.length === 0) return;
+      RUNS = runs;
+      renderHistoryRows();
+    })
+    .catch(() => { /* history is a convenience; never block the app on it */ });
+}
 
+/* Split from the fetch so the search box can refilter without a round trip. */
+function renderHistoryRows() {
+  const q = RUN_FILTER.trim().toLowerCase();
+  const runs = q
+    ? RUNS.filter(r => ((r.set_labels || []).join(" ") + " " + (STATUS_LABEL[r.status] || r.status))
+        .toLowerCase().includes(q))
+    : RUNS;
+
+  $("#history-empty").classList.toggle("hide", runs.length > 0);
+  $("#history-table").classList.toggle("hide", runs.length === 0);
+  $("#history-foot").classList.toggle("hide", runs.length === 0);
+  $("#history-count").textContent = `Showing ${runs.length} of ${RUNS.length} runs`;
+  if (runs.length === 0) return;
+
+  {
       $("#history-table").innerHTML =
         "<tr><th>Started</th><th>Sets</th><th>Traced</th><th>Untraced</th>" +
         "<th>Status</th><th style='text-align:right'></th></tr>" +
@@ -252,7 +278,8 @@ function loadHistory() {
           const untraced = r.status === "done" ? fmt(r.untraced || 0) : "&mdash;";
           const label = STATUS_LABEL[r.status] || r.status;
           const open = r.status === "done"
-            ? `<button class="btn clear" data-run="${r.id}">Open</button>`
+            ? `<button class="rowgo" data-run="${r.id}" title="Open this run">` +
+              `<span class="ms-icon">arrow_forward</span></button>`
             : "";
           return `<tr><td>${when}<div class="muted" style="font-size:12px">${labels}</div></td>` +
                  `<td>${fmt(r.sets || 0)}</td><td>${traced}</td><td>${untraced}</td>` +
@@ -263,8 +290,7 @@ function loadHistory() {
       Array.from($("#history-table").querySelectorAll
         ? $("#history-table").querySelectorAll("button")
         : []).forEach(b => b.addEventListener("click", () => openRun(b.getAttribute("data-run"))));
-    })
-    .catch(() => { /* history is a convenience; never block the app on it */ });
+  }
 }
 
 /* Reopens a stored run: its summaries, downloads and dashboard come back from

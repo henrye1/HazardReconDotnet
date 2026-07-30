@@ -77,9 +77,13 @@
       <div class="pagehead">
         <div class="grow">
           <h1>My runs</h1>
-          <p>Every reconciliation you have run, with its sets and outcome.</p>
+          <p>Reconcile engine defaults against write-offs and IFRS9, then review the model output.</p>
         </div>
         <div class="actions" style="margin-top:0">
+          <div class="search">
+            <span class="ms-icon">search</span>
+            <input type="text" id="run-search" placeholder="Search runs, sets&hellip;" spellcheck="false">
+          </div>
           <button class="btn primary" id="btn-new-run">
             <span class="ms-icon" style="font-size:20px">add</span>New run
           </button>
@@ -101,6 +105,10 @@
           <div class="cardhead"><span>Run history</span></div>
           <div style="overflow-x:auto">
             <table class="grid" id="history-table"></table>
+          </div>
+          <div class="tablefoot hide" id="history-foot">
+            <span id="history-count"></span>
+            <span>Uploaded inputs are kept for 30 days; runs and outputs are kept indefinitely.</span>
           </div>
           <div class="cardbody hide" id="history-empty">
             <p class="muted" style="margin:0">No runs yet. Choose <b>New run</b> to reconcile your first set of folders.</p>
