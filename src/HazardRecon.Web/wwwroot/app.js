@@ -64,11 +64,23 @@ function startSession() {
     });
 }
 
+/* Supabase reads a sign-up carrying no email as an ANONYMOUS sign-in, and
+   answers "Anonymous sign-ins are disabled" - which says nothing about the empty
+   box that actually caused it, and names a feature nobody asked for. Worse, with
+   no email the password is ignored entirely. So both fields are checked here,
+   before the call. See https://github.com/supabase/auth-js/issues/943 */
+function credentials() {
+  const email = $("#auth-email").value.trim();
+  const password = $("#auth-password").value;
+  if (!email) { $("#auth-msg").textContent = "Enter your email address."; return null; }
+  if (!password) { $("#auth-msg").textContent = "Enter your password."; return null; }
+  return { email, password };
+}
+
 $("#btn-signin").addEventListener("click", () => {
-  SB.auth.signInWithPassword({
-    email: $("#auth-email").value.trim(),
-    password: $("#auth-password").value,
-  }).then(({ data, error }) => {
+  const c = credentials();
+  if (!c) return;
+  SB.auth.signInWithPassword(c).then(({ data, error }) => {
     if (error) { $("#auth-msg").textContent = error.message; return; }
     TOKEN = data.session.access_token;
     hideGate();
@@ -77,10 +89,9 @@ $("#btn-signin").addEventListener("click", () => {
 });
 
 $("#btn-signup").addEventListener("click", () => {
-  SB.auth.signUp({
-    email: $("#auth-email").value.trim(),
-    password: $("#auth-password").value,
-  }).then(({ error }) => {
+  const c = credentials();
+  if (!c) return;
+  SB.auth.signUp(c).then(({ error }) => {
     $("#auth-msg").textContent = error
       ? error.message
       : "Check your email for a confirmation link, then sign in.";

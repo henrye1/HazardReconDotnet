@@ -64,6 +64,7 @@ function newCtx() {
     supabase: {
       _session: null,
       _signInError: null,
+      _signUpCalls: [],
       createClient() {
         const self = this;
         return {
@@ -73,7 +74,18 @@ function newCtx() {
               Promise.resolve(self._signInError
                 ? { data: { session: null }, error: { message: self._signInError } }
                 : { data: { session: { access_token: "tok-" + email } }, error: null }),
-            signUp: () => Promise.resolve({ data: { session: null }, error: null }),
+            signUp: (creds) => {
+              self._signUpCalls.push(creds);
+              // mirrors the real service: no email means an anonymous sign-up,
+              // which a project with anonymous sign-ins off rejects
+              if (!creds || !creds.email) {
+                return Promise.resolve({
+                  data: { session: null },
+                  error: { message: "Anonymous sign-ins are disabled" },
+                });
+              }
+              return Promise.resolve({ data: { session: null }, error: null });
+            },
             signOut: () => { self._session = null; return Promise.resolve({ error: null }); },
           },
         };
@@ -376,7 +388,50 @@ async function scenarioL() {
     `msg='${h.$get("#auth-msg").textContent}'`);
 }
 
+/* ---------------- M: empty fields never reach Supabase ---------------- */
+async function scenarioM() {
+  console.log("M) blank credentials are refused locally, not by the auth service");
+  const h = bootAuth(null);
+  await tick(); await tick(); await tick();
+
+  // both boxes empty - the bug was sending this, which Supabase reads as an
+  // anonymous sign-up and rejects with a message about a feature nobody used
+  h.$get("#auth-email").value = "";
+  h.$get("#auth-password").value = "";
+  h.$get("#btn-signup")._fire("click");
+  await tick(); await tick();
+
+  check("no signUp call was made", h.ctx.supabase._signUpCalls.length === 0,
+    JSON.stringify(h.ctx.supabase._signUpCalls));
+  check("the empty email is named", /email/i.test(h.$get("#auth-msg").textContent || ""),
+    `msg='${h.$get("#auth-msg").textContent}'`);
+  check("no anonymous wording leaks through",
+    !/anonymous/i.test(h.$get("#auth-msg").textContent || ""),
+    `msg='${h.$get("#auth-msg").textContent}'`);
+
+  // an email but no password must be caught too
+  h.$get("#auth-email").value = "a@b.com";
+  h.$get("#auth-password").value = "";
+  h.$get("#btn-signup")._fire("click");
+  await tick(); await tick();
+
+  check("still no signUp call", h.ctx.supabase._signUpCalls.length === 0);
+  check("the empty password is named", /password/i.test(h.$get("#auth-msg").textContent || ""),
+    `msg='${h.$get("#auth-msg").textContent}'`);
+
+  // and a complete pair goes through
+  h.$get("#auth-password").value = "pw";
+  h.$get("#btn-signup")._fire("click");
+  await tick(); await tick();
+
+  check("a complete pair reaches signUp", h.ctx.supabase._signUpCalls.length === 1,
+    JSON.stringify(h.ctx.supabase._signUpCalls));
+  check("confirmation is explained",
+    /confirmation link/i.test(h.$get("#auth-msg").textContent || ""),
+    `msg='${h.$get("#auth-msg").textContent}'`);
+}
+
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
-                 scenarioI, scenarioJ, scenarioK, scenarioL]) { await s(); console.log(""); }
+                 scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
