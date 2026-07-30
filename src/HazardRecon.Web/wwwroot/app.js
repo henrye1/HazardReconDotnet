@@ -61,6 +61,7 @@ function startSession() {
     .then(readJson)
     .then(({ j }) => {
       const cfg = j || {};
+      if (cfg.maxBytesPerSet) MAX_SET_BYTES = cfg.maxBytesPerSet;
       SB = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       return SB.auth.getSession();
     })
@@ -119,10 +120,11 @@ startSession();
 const MAX_SETS = 4;
 let PATHS = 0;
 
-/* Must match UploadReceiver.MaxBytesPerSet - checked here so an oversized
-   folder is caught before it is uploaded, and again on the server because a
-   browser check protects nobody. */
-const MAX_SET_BYTES = 50 * 1024 * 1024;
+/* Comes from /api/config, so it cannot drift from the server's own limit and
+   reject folders the server would have accepted. Checked here to catch an
+   oversized folder before the upload, and again on the server because a browser
+   check protects nobody. The fallback only applies before config arrives. */
+let MAX_SET_BYTES = 512 * 1024 * 1024;
 
 function addPathRow() {
   if (PATHS >= MAX_SETS) return;
@@ -165,7 +167,9 @@ function describeSet(i) {
   const bytes = setBytes(files);
   const mb = bytes / (1024 * 1024);
   info.textContent = `${setLabel(files)} - ${files.length} files, ${mb.toFixed(1)} MB` +
-    (bytes > MAX_SET_BYTES ? " - too large, the limit is 50 MB per folder" : "");
+    (bytes > MAX_SET_BYTES
+      ? ` - too large, the limit is ${Math.round(MAX_SET_BYTES / (1024 * 1024))} MB per folder`
+      : "");
 }
 
 function updateReady() {

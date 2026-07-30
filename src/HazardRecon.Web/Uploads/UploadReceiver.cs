@@ -24,7 +24,18 @@ public class UploadReceiver
 {
     public const int MaxSets = 4;
     public const int MaxFilesPerSet = 500;
-    public const long MaxBytesPerSet = 50L * 1024 * 1024;
+
+    /// <summary>
+    /// Default ceiling per folder. Real debug folders carrying both debug.zip and
+    /// its extracted contents run well past 150 MB, so this is deliberately
+    /// generous; override with Uploads:MaxBytesPerSet where storage is tighter.
+    /// </summary>
+    public const long DefaultMaxBytesPerSet = 512L * 1024 * 1024;
+
+    public long MaxBytesPerSet { get; }
+
+    public UploadReceiver(long maxBytesPerSet = DefaultMaxBytesPerSet) =>
+        MaxBytesPerSet = maxBytesPerSet;
 
     /// <summary>
     /// Writes every item under <paramref name="destinationRoot"/>. Each set gets

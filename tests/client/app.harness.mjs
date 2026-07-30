@@ -467,13 +467,39 @@ async function scenarioO() {
     /2 files/.test(h.$get("#path1-info").textContent),
     `info='${h.$get("#path1-info").textContent}'`);
 
+  // a real 159 MB debug folder must be accepted, not blocked
+  h.$get("#path1").files = [mkFile("DEBUG 3 MONTHS/debug.zip", 159 * 1024 * 1024)];
+  h.$get("#path1")._fire("change");
+
+  check("a 159 MB folder is accepted", h.$get("#btn-check").disabled === false,
+    `info='${h.$get("#path1-info").textContent}'`);
+
   // an oversized folder must block the button rather than fail after upload
-  h.$get("#path1").files = [mkFile("BIG/huge.zip", 51 * 1024 * 1024)];
+  h.$get("#path1").files = [mkFile("BIG/huge.zip", 600 * 1024 * 1024)];
   h.$get("#path1")._fire("change");
 
   check("oversized folder disables the check", h.$get("#btn-check").disabled === true);
   check("the size limit is explained",
-    /limit is 50 MB/.test(h.$get("#path1-info").textContent),
+    /limit is 512 MB/.test(h.$get("#path1-info").textContent),
+    `info='${h.$get("#path1-info").textContent}'`);
+}
+
+async function scenarioQ() {
+  console.log("Q) the browser adopts the server's size limit rather than its own");
+  // server says 100 MB; a 150 MB folder must be refused even though the
+  // built-in fallback (512 MB) would have allowed it
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config"
+      ? Object.assign({}, CFG, { maxBytesPerSet: 100 * 1024 * 1024 })
+      : [])));
+  await tick(); await tick(); await tick();
+
+  h.$get("#path1").files = [mkFile("SET/big.zip", 150 * 1024 * 1024)];
+  h.$get("#path1")._fire("change");
+
+  check("the server's smaller limit is enforced", h.$get("#btn-check").disabled === true);
+  check("the message quotes the server's limit",
+    /limit is 100 MB/.test(h.$get("#path1-info").textContent),
     `info='${h.$get("#path1-info").textContent}'`);
 }
 
@@ -547,6 +573,6 @@ async function scenarioN() {
 
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
-                 scenarioO, scenarioP]) { await s(); console.log(""); }
+                 scenarioO, scenarioP, scenarioQ]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

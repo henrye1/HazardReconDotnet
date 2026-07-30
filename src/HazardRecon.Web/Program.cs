@@ -8,6 +8,7 @@ using HazardRecon.Web;
 using HazardRecon.Web.Supabase;
 using HazardRecon.Web.Uploads;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
@@ -55,6 +56,21 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+
+// Kestrel refuses bodies over ~30 MB by default and the form reader caps
+// multipart at 128 MB, so both have to be lifted to whatever the upload limit
+// actually is - otherwise a folder inside the limit still dies as a 413.
+long maxBytesPerSet = builder.Configuration.GetValue<long?>("Uploads:MaxBytesPerSet")
+    ?? UploadReceiver.DefaultMaxBytesPerSet;
+long maxRequestBytes = maxBytesPerSet * UploadReceiver.MaxSets + (16L * 1024 * 1024);
+
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxRequestBytes);
+builder.Services.Configure<FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = maxRequestBytes;
+    o.MultipartHeadersLengthLimit = 65536;
+    o.ValueCountLimit = UploadReceiver.MaxFilesPerSet * UploadReceiver.MaxSets + 32;
+});
 
 var app = builder.Build();
 app.UseAuthentication();
@@ -123,7 +139,7 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     Directory.CreateDirectory(outdir);
     Directory.CreateDirectory(indir);
 
-    UploadOutcome upload = await new UploadReceiver().ReceiveAsync(indir, items, ctx.RequestAborted);
+    UploadOutcome upload = await new UploadReceiver(maxBytesPerSet).ReceiveAsync(indir, items, ctx.RequestAborted);
     if (!upload.Ok)
     {
         Directory.Delete(runRoot, recursive: true);
@@ -404,7 +420,12 @@ app.MapDelete("/api/session", (HttpContext ctx) =>
 app.MapGet("/api/config", () => Results.Ok(new
 {
     supabaseUrl = supabaseOptions.BaseUrl,
-    supabaseAnonKey = supabaseOptions.AnonKey
+    supabaseAnonKey = supabaseOptions.AnonKey,
+    // served rather than duplicated in app.js: a browser limit that disagrees
+    // with the server's rejects folders the server would have accepted
+    maxBytesPerSet,
+    maxFilesPerSet = UploadReceiver.MaxFilesPerSet,
+    maxSets = UploadReceiver.MaxSets
 }));
 
 // GET /health

@@ -119,13 +119,15 @@ public class UploadReceiverTests : IDisposable
     [Fact]
     public async Task TestAnOversizedFolderIsRefusedBeforeAnythingIsWritten()
     {
-        UploadOutcome result = await new UploadReceiver().ReceiveAsync(_root, new[]
+        long limit = 10L * 1024 * 1024;
+
+        UploadOutcome result = await new UploadReceiver(limit).ReceiveAsync(_root, new[]
         {
-            Sized(0, "SET/huge.zip", UploadReceiver.MaxBytesPerSet + 1),
+            Sized(0, "SET/huge.zip", limit + 1),
         });
 
         Assert.False(result.Ok);
-        Assert.Contains("limit is 50 MB", result.Error!);
+        Assert.Contains("limit is 10 MB", result.Error!);
         // refused on the declared size, so no disk was consumed proving it
         Assert.False(Directory.Exists(Path.Combine(_root, "0")));
     }
@@ -134,15 +136,30 @@ public class UploadReceiverTests : IDisposable
     public async Task TestEachFolderGetsItsOwnBudget()
     {
         // just under the cap twice over: two sets are not summed into one limit
-        long each = UploadReceiver.MaxBytesPerSet - 1;
+        long limit = 10L * 1024 * 1024;
 
-        UploadOutcome result = await new UploadReceiver().ReceiveAsync(_root, new[]
+        UploadOutcome result = await new UploadReceiver(limit).ReceiveAsync(_root, new[]
         {
-            Sized(0, "A/big.zip", each),
-            Sized(1, "B/big.zip", each),
+            Sized(0, "A/big.zip", limit - 1),
+            Sized(1, "B/big.zip", limit - 1),
         });
 
         Assert.True(result.Ok, result.Error);
         Assert.Equal(2, result.Sets.Count);
+    }
+
+    [Fact]
+    public async Task TestARealSizedDebugFolderIsAccepted()
+    {
+        // the case that prompted the limit change: a genuine debug folder
+        // carrying debug.zip alongside its extracted contents, ~160 MB
+        UploadOutcome result = await new UploadReceiver().ReceiveAsync(_root, new[]
+        {
+            Sized(0, "DEBUG FILE 30 JUNE 2026 3 MONTHS/debug.zip", 80L * 1024 * 1024),
+            Sized(0, "DEBUG FILE 30 JUNE 2026 3 MONTHS/_extracted/lgd_defaults.csv", 80L * 1024 * 1024),
+        });
+
+        Assert.True(result.Ok, result.Error);
+        Assert.Equal("DEBUG FILE 30 JUNE 2026 3 MONTHS", result.Sets[0].Label);
     }
 }
