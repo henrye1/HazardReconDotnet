@@ -59,9 +59,10 @@ assumption and `render.yaml` pins `numInstances: 1`.
 2. Create a **private** storage bucket named `runs`, with no storage policies.
 3. Turn on **Confirm email** under Authentication → Providers → Email.
 4. Work through `docs/superpowers/2026-07-30-supabase-verified-behaviour.md` and
-   record the results. If the project serves no OpenID discovery document, the
-   JWT bearer configuration in `Program.cs` needs the explicit JWKS retriever
-   described there — otherwise every request 401s.
+   record the results. Nothing there blocks the deploy — the app reads the JWKS
+   directly and needs no discovery document — but rows 4–6 pin the issuer,
+   audience, and `sub` claim the code assumes, and no offline test can prove
+   those match your project.
 
 ## Verifying a deploy
 

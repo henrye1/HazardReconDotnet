@@ -7,6 +7,8 @@ using HazardRecon.Core.Services;
 using HazardRecon.Web;
 using HazardRecon.Web.Supabase;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,12 +32,15 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        // Supabase signs with rotating asymmetric keys published as a JWKS, which
-        // the handler discovers from the issuer's OpenID configuration document.
-        // If a project serves no discovery document, this needs the explicit JWKS
-        // configuration manager - see docs/superpowers/2026-07-30-supabase-verified-behaviour.md
-        options.Authority = SupabaseJwt.Issuer(supabaseOptions);
+        // Read the key set directly rather than setting Authority: Supabase does
+        // not yet serve an OpenID discovery document, so Authority has nothing to
+        // resolve and every request would 401. Reading jwks.json works both now
+        // and after discovery ships, so there is no path here to revisit.
         options.TokenValidationParameters = SupabaseJwt.BuildValidationParameters(supabaseOptions);
+        options.ConfigurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
+            $"{SupabaseJwt.Issuer(supabaseOptions)}/.well-known/jwks.json",
+            new JwksRetriever(),
+            new HttpDocumentRetriever());
     });
 
 builder.Services.AddAuthorization();

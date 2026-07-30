@@ -1,10 +1,18 @@
 # Supabase project — behaviour to verify
 
-**Status: NOT YET VERIFIED.** No Supabase project existed when the code was
-written, so every row below is unfilled. The auth code currently assumes the
-**Authority** path (row 2 answering "yes"). Fill this in before trusting the
-deployment, and if row 2 turns out to be "no", switch to the JWKS fallback —
-see "If the discovery document is absent" at the bottom.
+**Status: partly resolved — no longer blocking.**
+
+The one question that used to gate the auth wiring (does the project serve an
+OpenID discovery document?) has been designed out. The app reads
+`/auth/v1/.well-known/jwks.json` directly via `JwksRetriever`, which works whether
+or not discovery exists, so **probe 2 is now informational only.**
+
+Supabase maintainers describe OIDC discovery as [still being added](https://github.com/orgs/supabase/discussions/38983)
+— "so you can point your API's `authority` at your Supabase project" — which is
+exactly why `options.Authority` was the wrong choice and was removed.
+
+The remaining rows are still worth filling in, because rows 4–6 pin assumptions
+the code makes that no offline test can prove.
 
 This mirrors the "Verified gateway behaviour" table in
 `specs/2026-07-29-cyte-llm-model-selection-design.md`: probe first, then design
@@ -18,7 +26,7 @@ result.
 | # | Probe | Command | Expected | Actual |
 |---|---|---|---|---|
 | 1 | JWKS endpoint serves a key set | `curl -s "https://<ref>.supabase.co/auth/v1/.well-known/jwks.json"` | JSON with a `keys` array | |
-| 2 | OpenID discovery document exists | `curl -s -o /dev/null -w "%{http_code}\n" "https://<ref>.supabase.co/auth/v1/.well-known/openid-configuration"` | `200` or `404` — **this decides the auth wiring** | |
+| 2 | OpenID discovery document exists | `curl -s -o /dev/null -w "%{http_code}\n" "https://<ref>.supabase.co/auth/v1/.well-known/openid-configuration"` | either — informational only, the code no longer depends on it | |
 | 3 | Signing algorithm | from probe 1, read `keys[0].alg` and `keys[0].kty` | `ES256`/`EC` or `RS256`/`RSA`, **not** a legacy HS256 shared secret | |
 | 4 | Issuer claim on a real token | sign up a test user, decode the `access_token` payload, read `iss` | `https://<ref>.supabase.co/auth/v1` | |
 | 5 | Audience claim on a real token | same token, read `aud` | `authenticated` | |
@@ -40,12 +48,14 @@ your project, tokens are rejected at the door and every API call 401s.
 `SupabaseJwtTests` proves the validation logic is correct against those
 assumptions — it cannot prove the assumptions match your project.
 
-## If the discovery document is absent
+## How keys are resolved
 
-If probe 2 returns 404, the `options.Authority` line in `Program.cs` cannot
-resolve keys. Replace it with the explicit JWKS configuration manager and add
-`JwksRetriever` — both are written out in full in
-`plans/2026-07-30-supabase-auth-foundation.md`, Task 6 step 6.
+`Program.cs` points a `ConfigurationManager<OpenIdConnectConfiguration>` straight
+at `/auth/v1/.well-known/jwks.json` through `JwksRetriever`. No discovery document
+is involved, and the manager refreshes on its own schedule, so key rotation is
+handled — `JwksRetrieverTests.TestEveryKeyInTheSetIsReturned` pins that both the
+outgoing and incoming key survive a rotation, since dropping either would
+silently invalidate half the live sessions.
 
 ## Schema application
 
