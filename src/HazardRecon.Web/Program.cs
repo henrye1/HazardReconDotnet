@@ -6,6 +6,7 @@ using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
 using HazardRecon.Web.Supabase;
+using HazardRecon.Web.Uploads;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -76,39 +77,60 @@ Directory.CreateDirectory(runsDir);
 
 var jobs = new ConcurrentDictionary<string, JobState>();
 
-// POST /api/discover
+// POST /api/discover - receives the picked folders as an upload. A browser
+// cannot disclose a folder's path, so the files themselves are sent and
+// rehydrated into a directory shaped exactly like the folder the user chose.
+// Everything downstream - discovery, the engine, the exporters - is unchanged.
 app.MapPost("/api/discover", async (HttpContext ctx) =>
 {
-    var form = await ctx.Request.ReadFormAsync();
-    var paths = form["paths"]
-        .Select(p => (p ?? "").Trim().Trim('"'))
-        .Where(p => !string.IsNullOrEmpty(p))
-        .ToList();
+    if (!ctx.Request.HasFormContentType)
+        return Results.BadRequest(new { error = "Please choose at least one folder." });
 
-    if (paths.Count == 0)
-        return Results.BadRequest(new { error = "Please add at least one folder path." });
-
-    if (paths.Count > 4)
-        return Results.BadRequest(new { error = "A maximum of 4 folders is supported." });
-
-    for (int i = 0; i < paths.Count; i++)
+    IFormCollection form;
+    try
     {
-        if (!Directory.Exists(paths[i]))
-            return Results.BadRequest(new { error = $"Folder {i + 1}: not a folder on this machine:\n{paths[i]}" });
+        form = await ctx.Request.ReadFormAsync();
+    }
+    catch (Exception ex)
+    {
+        // a body that is empty or not really multipart throws in here; without
+        // this the user gets a bare 500 for what is a bad request
+        return Results.BadRequest(new
+        {
+            error = "Please choose at least one folder.",
+            detail = ex.GetType().Name
+        });
     }
 
-    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    foreach (string path in paths)
+    List<UploadItem> items = new();
+    foreach (IFormFile file in form.Files)
     {
-        string norm = Path.GetFullPath(path);
-        if (!seen.Add(norm))
-            return Results.BadRequest(new { error = $"Folder '{path}' is listed more than once." });
+        // the browser sends one field per file, named set0..set3, carrying the
+        // file's path relative to the folder that was picked
+        if (!file.Name.StartsWith("set", StringComparison.OrdinalIgnoreCase)
+            || !int.TryParse(file.Name.AsSpan(3), out int setIndex))
+        {
+            return Results.BadRequest(new { error = $"Unexpected upload field '{file.Name}'." });
+        }
+
+        items.Add(new UploadItem(setIndex, file.FileName, file.OpenReadStream(), file.Length));
     }
 
     string rid = DateTime.Now.ToString("yyyyMMdd-HHmmss-") + Guid.NewGuid().ToString("N")[..6];
     string runRoot = Path.Combine(runsDir, rid);
     string outdir = Path.Combine(runRoot, "output");
+    string indir = Path.Combine(runRoot, "input");
     Directory.CreateDirectory(outdir);
+    Directory.CreateDirectory(indir);
+
+    UploadOutcome upload = await new UploadReceiver().ReceiveAsync(indir, items, ctx.RequestAborted);
+    if (!upload.Ok)
+    {
+        Directory.Delete(runRoot, recursive: true);
+        return Results.BadRequest(new { error = upload.Error });
+    }
+
+    List<string> paths = upload.Sets.Select(s => s.Root).ToList();
 
     jobs[rid] = new JobState
     {

@@ -119,6 +119,11 @@ startSession();
 const MAX_SETS = 4;
 let PATHS = 0;
 
+/* Must match UploadReceiver.MaxBytesPerSet - checked here so an oversized
+   folder is caught before it is uploaded, and again on the server because a
+   browser check protects nobody. */
+const MAX_SET_BYTES = 50 * 1024 * 1024;
+
 function addPathRow() {
   if (PATHS >= MAX_SETS) return;
   PATHS += 1;
@@ -127,40 +132,59 @@ function addPathRow() {
     <div class="slothead"><b>Folder ${i}</b>
       <button class="btn clear" id="path${i}-clear" title="Clear">&#10005;</button></div>
     <div class="row">
-      <input type="text" class="pathbox" id="path${i}" spellcheck="false"
-             placeholder="C:\\...\\DEBUG FILE 30 JUNE 2026 0.5 PERCENT">
-    </div>`);
+      <input type="file" id="path${i}" webkitdirectory directory multiple>
+    </div>
+    <p class="hint" id="path${i}-info"></p>`);
   $("#paths").appendChild(d);
-  $("#path" + i).addEventListener("input", updateReady);
+  $("#path" + i).addEventListener("change", () => { describeSet(i); updateReady(); });
   $("#path" + i + "-clear").addEventListener("click", () => {
-    $("#path" + i).value = ""; updateReady();
+    $("#path" + i).value = "";
+    describeSet(i);
+    updateReady();
   });
   $("#btn-add-path").disabled = PATHS >= MAX_SETS;
 }
 
-function pathValues() {
-  const out = [];
-  for (let i = 1; i <= PATHS; i++) {
-    const v = $("#path" + i).value.trim();
-    if (v) out.push(v);
-  }
-  return out;
+function setFiles(i) {
+  const input = $("#path" + i);
+  return input && input.files ? Array.from(input.files) : [];
 }
 
-function updateReady() { $("#btn-check").disabled = pathValues().length === 0; }
+const setBytes = (files) => files.reduce((n, f) => n + (f.size || 0), 0);
+
+/* The folder's own name is only knowable from a file's relative path - the
+   picker never reveals where on disk it came from. */
+const setLabel = (files) =>
+  files.length ? (files[0].webkitRelativePath || files[0].name || "").split("/")[0] : "";
+
+function describeSet(i) {
+  const info = $("#path" + i + "-info");
+  const files = setFiles(i);
+  if (!files.length) { info.textContent = ""; return; }
+
+  const bytes = setBytes(files);
+  const mb = bytes / (1024 * 1024);
+  info.textContent = `${setLabel(files)} - ${files.length} files, ${mb.toFixed(1)} MB` +
+    (bytes > MAX_SET_BYTES ? " - too large, the limit is 50 MB per folder" : "");
+}
+
+function updateReady() {
+  let chosen = 0;
+  let oversized = false;
+  for (let i = 1; i <= PATHS; i++) {
+    const files = setFiles(i);
+    if (!files.length) continue;
+    chosen += 1;
+    if (setBytes(files) > MAX_SET_BYTES) oversized = true;
+  }
+  $("#btn-check").disabled = chosen === 0 || oversized;
+}
 
 addPathRow();
 $("#btn-add-path").addEventListener("click", addPathRow);
-
-(function restorePaths() {
-  let saved = [];
-  try { saved = JSON.parse(localStorage.getItem("hr_paths") || "[]"); } catch (_) { }
-  saved.slice(0, MAX_SETS).forEach((p, i) => {
-    while (PATHS < i + 1) addPathRow();
-    $("#path" + (i + 1)).value = p;
-  });
-  updateReady();
-})();
+updateReady();
+// no restore of a previous choice: a file input cannot be repopulated from
+// script, so there is nothing to put back. Run history replaces this.
 
 /* ---------- step 2: model ---------- */
 function addModelOption(value, label) {
@@ -207,14 +231,23 @@ $("#model").addEventListener("change", () => localStorage.setItem("hr_model", $(
 // guaranteed 401.
 
 function discover() {
-  const paths = pathValues();
   const fd = new FormData();
-  paths.forEach(p => fd.append("paths", p));
+  let sets = 0;
+  for (let i = 1; i <= PATHS; i++) {
+    const files = setFiles(i);
+    if (!files.length) continue;
+    // one field per file, named for its set; the third argument carries the
+    // path relative to the picked folder, which is what rebuilds the structure
+    files.forEach(f => fd.append("set" + sets, f, f.webkitRelativePath || f.name));
+    sets += 1;
+  }
+
+  if (sets === 0) return Promise.reject(new Error("Please choose at least one folder."));
+
   return api("/api/discover", { method: "POST", body: fd })
     .then(readJson)
     .then(({ ok, status, j }) => {
       if (!ok || !j) throw new Error((j && j.error) || `Discovery failed (server returned ${status}).`);
-      localStorage.setItem("hr_paths", JSON.stringify(paths));
       showInventory(j);
       return j;
     });

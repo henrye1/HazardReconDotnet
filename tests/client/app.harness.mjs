@@ -18,6 +18,9 @@ function makeEl(id = "") {
   const kids = [];
   const el = {
     id, className: "", textContent: "", value: "", src: "", href: "",
+    // file inputs expose a FileList; the picker code reads .files and each
+    // file's webkitRelativePath, which is the only clue to the folder's name
+    files: [],
     disabled: false, scrollTop: 0, scrollHeight: 0, parentNode: null,
     classList: {
       _s: new Set(),
@@ -96,6 +99,9 @@ function newCtx() {
         };
       },
     },
+    // records what was appended, so a scenario can assert on the upload shape
+    FormData: class { constructor() { this._parts = []; }
+      append(field, value, filename) { this._parts.push({ field, value, filename }); } },
     Number, JSON, String, Date, Object, Array, Math, Promise, encodeURIComponent,
   };
   ctx.globalThis = ctx;
@@ -439,6 +445,69 @@ async function scenarioM() {
     `msg='${h.$get("#auth-msg").textContent}'`);
 }
 
+/* ---------------- O: folder picking ---------------- */
+const mkFile = (relPath, size) => ({ name: relPath.split("/").pop(), size, webkitRelativePath: relPath });
+
+async function scenarioO() {
+  console.log("O) picking a folder enables the check and uploads it per set");
+  const h = bootAuth({ access_token: "tok-abc" });
+  await tick(); await tick(); await tick();
+
+  check("check button starts disabled", h.$get("#btn-check").disabled === true);
+
+  h.$get("#path1").files = [
+    mkFile("JUNE 2026 0.5 PERCENT/debug.zip", 1024),
+    mkFile("JUNE 2026 0.5 PERCENT/write-off.csv", 2048),
+  ];
+  h.$get("#path1")._fire("change");
+
+  check("check button enabled once a folder is chosen", h.$get("#btn-check").disabled === false);
+  check("the folder name and size are shown",
+    /JUNE 2026 0\.5 PERCENT/.test(h.$get("#path1-info").textContent) &&
+    /2 files/.test(h.$get("#path1-info").textContent),
+    `info='${h.$get("#path1-info").textContent}'`);
+
+  // an oversized folder must block the button rather than fail after upload
+  h.$get("#path1").files = [mkFile("BIG/huge.zip", 51 * 1024 * 1024)];
+  h.$get("#path1")._fire("change");
+
+  check("oversized folder disables the check", h.$get("#btn-check").disabled === true);
+  check("the size limit is explained",
+    /limit is 50 MB/.test(h.$get("#path1-info").textContent),
+    `info='${h.$get("#path1-info").textContent}'`);
+}
+
+async function scenarioP() {
+  console.log("P) each file is posted under its own set field, keeping its relative path");
+  const posted = [];
+  const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/discover") {
+      posted.push(...(opts.body._parts || []));
+      return Promise.resolve(jsonRes(200,
+        { run_id: "RID9", inventory: { root: "r", sets: [] }, problems: [] }));
+    }
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  h.$get("#path1").files = [mkFile("SET A/debug.zip", 10)];
+  h.$get("#path1")._fire("change");
+  h.ctx.addPathRow();
+  h.$get("#path2").files = [mkFile("SET B/debug.zip", 10)];
+  h.$get("#path2")._fire("change");
+
+  await h.ctx.discover();
+
+  check("both folders were sent", posted.length === 2, JSON.stringify(posted));
+  check("fields are named per set",
+    posted[0].field === "set0" && posted[1].field === "set1",
+    JSON.stringify(posted.map(p => p.field)));
+  check("the relative path travels as the filename",
+    posted[0].filename === "SET A/debug.zip" && posted[1].filename === "SET B/debug.zip",
+    JSON.stringify(posted.map(p => p.filename)));
+}
+
 /* ---------------- N: the picker recovers after a failed attempt ---------------- */
 async function scenarioN() {
   console.log("N) a second loadModels after a failure re-enables and refills the picker");
@@ -477,6 +546,7 @@ async function scenarioN() {
 }
 
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
-                 scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN]) { await s(); console.log(""); }
+                 scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
+                 scenarioO, scenarioP]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
