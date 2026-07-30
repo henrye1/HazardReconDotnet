@@ -347,6 +347,7 @@ app.MapGet("/health", () => Results.Ok(new { ok = true, runs = jobs.Count }));
 Console.WriteLine("==================================================================");
 Console.WriteLine(" Hazard-Rate Reconciliation (.NET) | Anchor Point Risk");
 Console.WriteLine($" Open http://{host}:{port} in your browser (Ctrl+C here to stop)");
+Console.WriteLine(" Single instance only - run history assumes one process owns the live job cache");
 Console.WriteLine("==================================================================");
 
 app.Run();

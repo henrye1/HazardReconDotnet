@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: hazard-recon
+    runtime: docker
+    plan: starter
+    # The in-process job cache assumes exactly one instance. See
+    # docs/superpowers/specs/2026-07-30-supabase-auth-and-run-persistence-design.md
+    numInstances: 1
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: Supabase__Url
+        sync: false
+      - key: Supabase__AnonKey
+        sync: false
+      - key: Supabase__ServiceRoleKey
+        sync: false
+      - key: CyteLlm__ClientId
+        sync: false
+      - key: CyteLlm__ClientSecret
+        sync: false
