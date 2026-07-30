@@ -192,10 +192,18 @@ code{background:var(--cl-block-accent-color);padding:1px 5px;border-radius:4px;f
 .trend{padding:20px 16px 15px;display:flex;align-items:flex-end;gap:26px;height:150px}
 .trend .bar{flex:1;display:flex;flex-direction:column;align-items:center;
   justify-content:flex-end;gap:8px;height:100%}
-.trend .bar b{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
-.trend .bar i{display:block;width:100%;max-width:64px;background:var(--cl-primary-color);
-  border-radius:5px 5px 0 0}
-.trend .bar span{font-size:12px;color:var(--cl-off-text-color)}
+.trend .bar b{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:18px}
+/* Each bar is a fraction (--f) of the space left once the two labels have taken
+   theirs. Sizing it as a plain percentage of the column instead let flex-shrink
+   squeeze the tall bars harder than the short ones, so the chart misreported its
+   own numbers - 208 came out nearly as tall as 373. Not shrinking keeps the
+   fractions honest; the labels never wrap, so the 50px reservation holds. */
+.trend .bar i{
+  display:block;width:100%;max-width:64px;flex-shrink:0;
+  height:calc((100% - 50px) * var(--f, 0));
+  background:var(--cl-primary-color);border-radius:5px 5px 0 0;
+}
+.trend .bar span{font-size:12px;line-height:16px;color:var(--cl-off-text-color);white-space:nowrap}
 
 /* ---------- tables ---------- */
 table.grid{width:100%;border-collapse:collapse;font-size:14px}
@@ -418,13 +426,15 @@ table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3
 .stage .t{
   font-size:13px;color:var(--cl-off-text-color);font-variant-numeric:tabular-nums;flex:none;
 }
+/* Status classes are prefixed: a bare .warn here would inherit the warning
+   message panel's background, border and margins and break the row rhythm. */
 /* a stage still to come is dimmed, so the eye lands on what is happening now */
-.stage.pending .sx b,.stage.skipped .sx b{color:var(--cl-off-text-color);font-weight:600}
-.stage.pending>.ms-icon,.stage.skipped>.ms-icon{color:var(--cl-grey-color-light)}
-.stage.running>.ms-icon{color:var(--cl-primary-color);animation:spin 1s linear infinite}
-.stage.done>.ms-icon{color:var(--cl-action-color)}
-.stage.warn>.ms-icon{color:var(--cl-warning-text)}
-.stage.error>.ms-icon{color:var(--cl-error-color)}
+.stage.st-pending .sx b,.stage.st-skipped .sx b{color:var(--cl-off-text-color);font-weight:600}
+.stage.st-pending>.ms-icon,.stage.st-skipped>.ms-icon{color:var(--cl-grey-color-light)}
+.stage.st-running>.ms-icon{color:var(--cl-primary-color);animation:spin 1s linear infinite}
+.stage.st-done>.ms-icon{color:var(--cl-action-color)}
+.stage.st-warn>.ms-icon{color:var(--cl-warning-text)}
+.stage.st-error>.ms-icon{color:var(--cl-error-color)}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 .runfoot{padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
@@ -455,6 +465,8 @@ table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3
 }
 .detailhead .linkbtn{margin:0 0 10px}
 .dhrow{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
+/* .grow is scoped to .pagehead, so the detail header needs its own */
+.dhrow .grow{flex:1;min-width:280px}
 .dhtitle{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .dhtitle h1{margin:0;font-size:24px;line-height:31px;font-weight:800;color:var(--cl-primary-color)}
 .dhmeta{margin:6px 0 0;font-size:13px;color:var(--cl-off-text-color)}
@@ -492,7 +504,7 @@ table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3
 .ktile .v{font-size:28px;line-height:1.1;font-weight:700;font-variant-numeric:tabular-nums}
 .ktile .v.bad{color:var(--cl-error-color)}
 .ktile .v.good{color:var(--cl-success-color)}
-.ktile .v.warn{color:var(--cl-warning-text);background:none;border:0;padding:0;margin:0}
+.ktile .v.amber{color:var(--cl-warning-text)}
 
 /* the pass/fail pills under each check */
 .rag{display:flex;gap:10px;flex-wrap:wrap}

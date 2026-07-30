@@ -265,9 +265,10 @@ function renderTrend(runs) {
   $("#card-trend").classList.remove("hide");
   $("#trend").innerHTML = recent.map(r => {
     const v = r.untraced || 0;
-    const pct = Math.max(2, Math.round((v / peak) * 100));
+    // a floor so a run with nothing untraced still shows a hairline
+    const frac = Math.max(0.02, v / peak).toFixed(4);
     const when = new Date(r.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-    return `<div class="bar"><b>${fmt(v)}</b><i style="height:${pct}%"></i><span>${when}</span></div>`;
+    return `<div class="bar"><b>${fmt(v)}</b><i style="--f:${frac}"></i><span>${when}</span></div>`;
   }).join("");
 }
 
@@ -645,7 +646,7 @@ function stageTime(secs) {
 function renderStages(stages, target) {
   $(target || "#stages").innerHTML = stages.map(s => {
     const st = STAGE_ICON[s.status] ? s.status : "pending";
-    return `<div class="stage ${st}">` +
+    return `<div class="stage st-${st}">` +
       `<span class="ms-icon">${STAGE_ICON[st]}</span>` +
       `<div class="sx"><b>${escapeHtml(s.name || "")}</b>` +
       `<span>${escapeHtml(s.detail || "")}</span></div>` +
@@ -845,7 +846,7 @@ function renderSummaryTab(res) {
               <span class="v ${s.untraced > 0 ? "bad" : ""}">${fmt(s.untraced)}</span>
               <span class="s">${escapeHtml(s.untraced_fmt || "")}</span></div>
             <div class="ktile"><span class="l">Written off, never defaulted</span>
-              <span class="v ${s.wo_in_window > 0 ? "warn" : ""}">${fmt(s.wo_in_window)}</span>
+              <span class="v ${s.wo_in_window > 0 ? "amber" : ""}">${fmt(s.wo_in_window)}</span>
               <span class="s">in window · ${escapeHtml(s.wo_in_window_fmt || "")}</span></div>
           </div>
           <p class="hint" style="margin:0">Check 2 found ${fmt(s.wo_total)} in total —

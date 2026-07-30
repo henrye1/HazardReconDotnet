@@ -688,9 +688,9 @@ async function scenarioT() {
   const mid = h.$get("#stages").innerHTML;
   check("every stage is listed", (mid.match(/class="stage /g) || []).length === 4,
     `rows=${(mid.match(/class="stage /g) || []).length}`);
-  check("the running stage spins", /class="stage running"[\s\S]*progress_activity/.test(mid));
-  check("finished stages are ticked", /class="stage done"[\s\S]*check_circle/.test(mid));
-  check("a pending stage is not ticked", /class="stage pending"[\s\S]*radio_button_unchecked/.test(mid));
+  check("the running stage spins", /class="stage st-running"[\s\S]*progress_activity/.test(mid));
+  check("finished stages are ticked", /class="stage st-done"[\s\S]*check_circle/.test(mid));
+  check("a pending stage is not ticked", /class="stage st-pending"[\s\S]*radio_button_unchecked/.test(mid));
   check("durations are shown", /2\.5s/.test(mid), `html=${mid.slice(0, 120)}`);
 
   // two of four settled
@@ -715,7 +715,7 @@ async function scenarioT() {
   await tick(); await tick();
 
   const end = h.$get("#stages").innerHTML;
-  check("a warned stage is flagged", /class="stage warn"[\s\S]*warning/.test(end));
+  check("a warned stage is flagged", /class="stage st-warn"[\s\S]*warning/.test(end));
   check("long stages read as m ss", /1m 35s/.test(end), "expected 95s as 1m 35s");
   check("the bar completes", h.$get("#run-bar").style.width === "100%",
     `width='${h.$get("#run-bar").style.width}'`);
@@ -776,7 +776,7 @@ async function scenarioU() {
   check("the four figures are shown",
     (sum.match(/class="ktile"/g) || []).length === 4, `tiles=${(sum.match(/class="ktile"/g) || []).length}`);
   check("untraced is flagged red", /class="v bad">373</.test(sum));
-  check("in-window write-offs are flagged amber", /class="v warn">4</.test(sum));
+  check("in-window write-offs are flagged amber", /class="v amber">4</.test(sum));
   check("both checks get their own card", /Check 1 — trace every default/.test(sum) &&
     /Check 2 — the reverse trace/.test(sum));
   check("the rag pills read from the figures", /15,440 traced · 97.6%/.test(sum) &&
