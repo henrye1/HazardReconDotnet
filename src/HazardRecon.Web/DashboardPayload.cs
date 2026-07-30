@@ -54,6 +54,8 @@ public record DashboardSet
     public int ScoredInWriteOff { get; init; }
     [JsonPropertyName("scored_in_ifrs9")]
     public int? ScoredInIfrs9 { get; init; }
+    [JsonPropertyName("defaults_distinct")]
+    public int DefaultsDistinct { get; init; }
     [JsonPropertyName("writeoff_distinct")]
     public int WriteOffDistinct { get; init; }
     [JsonPropertyName("ifrs9_distinct")]
@@ -95,6 +97,7 @@ public static class DashboardPayload
             Lgd = Lgd(set.Engine),
             ScoredInWriteOff = s.ScoredInWriteOff,
             ScoredInIfrs9 = s.ScoredInIfrs9,
+            DefaultsDistinct = s.DefaultsDistinct,
             WriteOffDistinct = s.WriteOffDistinct,
             Ifrs9Distinct = s.Ifrs9Distinct,
             WoPreWindow = s.WoPreWindow,

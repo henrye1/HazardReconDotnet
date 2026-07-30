@@ -1172,7 +1172,15 @@ function renderDashMatrix(res) {
   row.classList.remove("hide");
 
   const d = withMatrix[0];
-  MIG = { months: d.months, data: d.migration, month: d.months[0], share: false, pick: null };
+  // the per-account movements behind a cell live in the set's migration detail CSV;
+  // without that file there is nothing to export, so the button is left out
+  const detail = (res.outputs || []).map(f => f.name)
+    .find(n => n.startsWith(d.key) && n.includes("migration"));
+
+  MIG = {
+    months: d.months, data: d.migration, month: d.months[0],
+    share: false, pick: null, detail: detail || null,
+  };
 
   $("#mig-month").innerHTML = d.months
     .map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
@@ -1272,6 +1280,8 @@ function drawCohortDetail(rows, rowTotals, total) {
         <span class="s">${escapeHtml(share)}</span>
       </div>
       <span class="hint" style="margin:0">${escapeHtml(MIG.month)}</span>
+      ${MIG.detail ? `<a class="btn block" href="${outputUrl(MIG.detail)}">
+        <span class="ms-icon" style="font-size:18px">download</span>Export cohort</a>` : ""}
     </div>`;
 }
 
@@ -1387,7 +1397,8 @@ function renderDashChecks(res) {
         ? "&mdash;" : (d.default_pct_of_scored * 100).toFixed(2) + "%";
       return "<tr>" + setKeyCell(s) +
         dcell(fmt(s.scored), { num: true }) +
-        dcell(fmt(s.defaults), { num: true }) +
+        // the distinct count, not the row count: this table is a census
+        dcell(fmt(d.defaults_distinct == null ? s.defaults : d.defaults_distinct), { num: true }) +
         dcell(pct, { num: true }) +
         dcell(fmt(d.writeoff_distinct), { num: true }) +
         dcell(fmt(d.ifrs9_distinct), { num: true }) +

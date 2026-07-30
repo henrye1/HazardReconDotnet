@@ -1015,6 +1015,7 @@ async function scenarioDE() {
   await tick(); await tick(); await tick();
 
   const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.outputs.push({ name: "JUN2026_migration_detail.csv", bytes: 96256 });
   res.dashboard_sets = [Object.assign(JSON.parse(JSON.stringify(DASH_SET_FIX)), {
     months: ["All months", "2026-01", "2026-02"],
     migration: MIG_FIX,
@@ -1064,6 +1065,9 @@ async function scenarioDE() {
   det = h.$get("#mig-detail").innerHTML;
   check("an off-diagonal reads as moved", /Moved between buckets/.test(det) &&
     /Bucket 1 → Bucket 2/.test(det));
+  check("the cohort can be exported", /Export cohort/.test(det) &&
+    /JUN2026_migration_detail\.csv/.test(det),
+    "the export should point at the set's migration detail CSV");
 
   // changing month clears the selection, since the cell belonged to the old month
   h.$get("#mig-month").value = "2026-02";
