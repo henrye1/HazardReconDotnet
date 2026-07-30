@@ -101,6 +101,44 @@ public class FakeRunStore : IRunStore
         Runs.Where(r => r.Status == "running").ToList().ForEach(r => r.Status = "interrupted");
         return Task.FromResult(n);
     }
+
+    public List<Guid> Stamped { get; } = new();
+
+    /// <summary>Makes MarkInputsPurgedAsync throw for one run, to exercise retry.</summary>
+    public Guid? FailStampFor { get; set; }
+
+    public Task<IReadOnlyList<RunRecord>> ListWithUnpurgedInputsAsync(
+        DateTimeOffset createdBefore, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<RunRecord>>(
+            Runs.Where(r => r.CreatedAt < createdBefore && r.InputsPurgedAt == null).ToList());
+
+    public Task MarkInputsPurgedAsync(Guid runId, CancellationToken ct = default)
+    {
+        if (FailStampFor == runId) throw new InvalidOperationException("stamp refused");
+
+        Stamped.Add(runId);
+        RunRecord? run = Runs.FirstOrDefault(r => r.Id == runId);
+        if (run != null) run.InputsPurgedAt = DateTimeOffset.UtcNow;
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Records every question and answer, in order.</summary>
+public class FakeChatStore : IChatStore
+{
+    public List<ChatMessageRecord> Messages { get; } = new();
+    public bool FailAdd { get; set; }
+
+    public Task AddAsync(IReadOnlyList<ChatMessageRecord> messages, CancellationToken ct = default)
+    {
+        if (FailAdd) throw new InvalidOperationException("chat store unavailable");
+        Messages.AddRange(messages);
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<ChatMessageRecord>> ListAsync(Guid runId, Guid userId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ChatMessageRecord>>(
+            Messages.Where(m => m.RunId == runId && m.UserId == userId).ToList());
 }
 
 public class FakeRunFileStore : IRunFileStore

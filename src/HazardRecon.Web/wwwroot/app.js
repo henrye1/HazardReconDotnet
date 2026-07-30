@@ -157,6 +157,12 @@ function openRun(id) {
       RUN_ID = j.id;
       showResults(j.result);
       $("#card-chat").classList.remove("hide");
+
+      // replay the conversation that went with this run
+      $("#chat-log").innerHTML = "";
+      (j.chat || []).forEach(m => addChatBubble(
+        m.role === "user" ? "user" : "bot",
+        m.role === "user" ? escapeHtml(m.content) : (m.content_html || escapeHtml(m.content))));
     });
 }
 

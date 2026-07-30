@@ -67,8 +67,14 @@ builder.Services.AddSingleton<IRunStore>(sp => new SupabaseRunStore(sp.GetRequir
 builder.Services.AddSingleton<IRunFileStore>(sp => new SupabaseRunFileStore(sp.GetRequiredService<SupabaseRestClient>()));
 builder.Services.AddSingleton<IFileStore>(sp => new SupabaseFileStore(
     sp.GetRequiredService<SupabaseRestClient>(), sp.GetRequiredService<SupabaseOptions>()));
+builder.Services.AddSingleton<IChatStore>(sp => new SupabaseChatStore(sp.GetRequiredService<SupabaseRestClient>()));
 builder.Services.AddSingleton(sp => new RunPersister(
     sp.GetRequiredService<IFileStore>(), sp.GetRequiredService<IRunFileStore>()));
+builder.Services.AddSingleton(sp => new InputPurger(
+    sp.GetRequiredService<IRunStore>(),
+    sp.GetRequiredService<IRunFileStore>(),
+    sp.GetRequiredService<IFileStore>()));
+builder.Services.AddHostedService<InputPurgeService>();
 
 // Kestrel refuses bodies over ~30 MB by default and the form reader caps
 // multipart at 128 MB, so both have to be lifted to whatever the upload limit
@@ -110,6 +116,7 @@ var jobs = new ConcurrentDictionary<string, JobState>();
 IRunStore runStore = app.Services.GetRequiredService<IRunStore>();
 IRunFileStore runFileStore = app.Services.GetRequiredService<IRunFileStore>();
 IFileStore fileStore = app.Services.GetRequiredService<IFileStore>();
+IChatStore chatStore = app.Services.GetRequiredService<IChatStore>();
 RunPersister persister = app.Services.GetRequiredService<RunPersister>();
 
 // A run only lives in this process, so anything still flagged running was killed
@@ -446,6 +453,30 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     if (chatRes.IsError)
         return Results.Json(new { error = chatRes.ErrorMessage }, statusCode: 503);
 
+    // Isolated like the rest: the user has their answer on screen, so failing to
+    // record it must not turn a good reply into an error.
+    try
+    {
+        Guid chatRunId = Guid.Parse(rid);
+        await chatStore.AddAsync(new[]
+        {
+            new ChatMessageRecord
+            {
+                RunId = chatRunId, UserId = chatUser.Value,
+                Role = "user", Content = message
+            },
+            new ChatMessageRecord
+            {
+                RunId = chatRunId, UserId = chatUser.Value,
+                Role = "assistant", Content = chatRes.Reply ?? "", ContentHtml = chatRes.ReplyHtml
+            }
+        });
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($" ! could not save chat for {rid}: {ex.Message}");
+    }
+
     return Results.Ok(new { reply = chatRes.Reply, reply_html = chatRes.ReplyHtml });
 }).RequireAuthorization();
 
@@ -547,6 +578,17 @@ app.MapGet("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
     RunRecord? run = await runStore.GetAsync(runId, historyUser.Value);
     if (run == null) return Results.NotFound(new { error = "Unknown run" });
 
+    IReadOnlyList<ChatMessageRecord> chat;
+    try
+    {
+        chat = await chatStore.ListAsync(runId, historyUser.Value);
+    }
+    catch (Exception)
+    {
+        // the run itself is the point; a missing conversation must not 500 it
+        chat = Array.Empty<ChatMessageRecord>();
+    }
+
     return Results.Ok(new
     {
         id = run.Id,
@@ -558,7 +600,14 @@ app.MapGet("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
         error = run.Error,
         log = run.Log,
         result = run.Result,
-        inputs_purged = run.InputsPurgedAt != null
+        inputs_purged = run.InputsPurgedAt != null,
+        chat = chat.Select(m => new
+        {
+            role = m.Role,
+            content = m.Content,
+            content_html = m.ContentHtml,
+            created_at = m.CreatedAt
+        })
     });
 }).RequireAuthorization();
 

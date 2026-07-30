@@ -109,6 +109,23 @@ public class SupabaseRunStore : IRunStore
         return doc.RootElement.GetArrayLength();
     }
 
+    public async Task<IReadOnlyList<RunRecord>> ListWithUnpurgedInputsAsync(
+        DateTimeOffset createdBefore, CancellationToken ct = default)
+    {
+        string encoded = Uri.EscapeDataString(createdBefore.ToString("O"));
+        string body = await _rest.SendAsync(HttpMethod.Get,
+            $"{Table}?created_at=lt.{encoded}&inputs_purged_at=is.null&select=*&order=created_at.asc",
+            null, null, ct);
+
+        return Parse(body);
+    }
+
+    public async Task MarkInputsPurgedAsync(Guid runId, CancellationToken ct = default)
+    {
+        await _rest.SendAsync(HttpMethod.Patch, $"{Table}?id=eq.{runId}",
+            Json(new { inputs_purged_at = DateTimeOffset.UtcNow }), ReturnRow, ct);
+    }
+
     public async Task<int> MarkRunningAsInterruptedAsync(CancellationToken ct = default)
     {
         string body = await _rest.SendAsync(HttpMethod.Patch,

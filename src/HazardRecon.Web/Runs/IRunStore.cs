@@ -38,4 +38,17 @@ public interface IRunStore
     /// startup: a restart killed those runs and nothing will ever finish them.
     /// </summary>
     Task<int> MarkRunningAsInterruptedAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Runs created before the cutoff whose inputs are still held. Not scoped by
+    /// user: retention sweeps everyone's.
+    /// </summary>
+    Task<IReadOnlyList<RunRecord>> ListWithUnpurgedInputsAsync(
+        DateTimeOffset createdBefore, CancellationToken ct = default);
+
+    /// <summary>
+    /// Stamps inputs_purged_at, which is what the history UI reads to say the
+    /// inputs have expired rather than offering a re-run.
+    /// </summary>
+    Task MarkInputsPurgedAsync(Guid runId, CancellationToken ct = default);
 }
