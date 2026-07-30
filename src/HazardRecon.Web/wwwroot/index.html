@@ -3,15 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hazard-Rate Reconciliation (.NET)</title>
+<title>Hazard-Rate Reconciliation | Cyte Risk Suite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@300;400;600;700;800&display=swap">
+<link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 
+<!-- sign-in gate: covers everything until there is a session -->
 <div id="auth-gate" class="authgate">
   <div class="authcard">
+    <div class="brandline"><b>RISK</b><i>SUITE</i></div>
     <h1>Hazard-Rate Reconciliation</h1>
-    <p class="hint">Sign in to run a reconciliation and see your history.</p>
+    <p class="hint" style="margin-top:2px">Sign in to run a reconciliation and see your history.</p>
     <label for="auth-email">Email</label>
     <input type="email" id="auth-email" autocomplete="email">
     <label for="auth-password">Password</label>
@@ -24,98 +32,218 @@
   </div>
 </div>
 
-<header>
-  <div class="wrap">
-    <div>
-      <h1>Hazard-Rate Reconciliation</h1>
-      <p>Anchor Point Risk &middot; reconcile engine defaults against write-offs and IFRS9, and review the model output</p>
-    </div>
-    <button class="btn" id="btn-signout">Sign out</button>
-  </div>
-</header>
+<div class="app">
 
-<main class="wrap">
+  <aside class="side">
+    <div class="brand"><b>RISK</b><i>SUITE</i></div>
 
-  <!-- run history -->
-  <section class="card hide" id="card-history">
-    <div class="stepline"><span class="step">&#8635;</span><h2>Your previous runs</h2></div>
-    <table class="grid" id="history-table"></table>
-  </section>
-
-  <!-- STEP 1 : choose folders -->
-  <section class="card">
-    <div class="stepline"><span class="step">1</span><h2>Choose your analysis folders</h2></div>
-
-    <p class="hint" style="margin:0 0 10px">Choose each analysis folder (up to 4).
-      Each folder holds everything for its run: the write-off CSV, the IFRS9 CSV,
-      <code>debug.zip</code> (or the extracted files) and <code>scenario.json</code>.
-      The folder's contents are uploaded, so a large folder takes a moment.</p>
-
-    <div id="paths"></div>
-    <button class="btn" id="btn-add-path">+ Add another folder</button>
-
-    <div class="actions">
-      <button class="btn primary big" id="btn-check" disabled>Check folders</button>
-    </div>
-  </section>
-
-  <!-- STEP 2 : confirm -->
-  <section class="card hide" id="card-inv">
-    <div class="stepline"><span class="step">2</span><h2>Confirm what was found</h2></div>
-    <p class="muted" id="inv-root"></p>
-    <div id="inv-problems"></div>
-    <table class="grid" id="inv-table"></table>
-    <div class="actions">
-      <div class="modelrow">
-        <label for="model">AI analysis model</label>
-        <select id="model"></select>
-        <span class="hint" id="model-note"></span>
+    <div class="appbadge">
+      <div class="sq">HR</div>
+      <div class="nm">
+        <b>Hazard Rate</b>
+        <span>Reconciliation</span>
       </div>
-      <button class="btn primary big" id="btn-run">Run reconciliation</button>
-      <span class="hint">Two checks per set, plus migrations and engine results.</span>
     </div>
-  </section>
 
-  <!-- STEP 3 : progress -->
-  <section class="card hide" id="card-run">
-    <div class="stepline"><span class="step">3</span><h2>Progress</h2>
-      <span class="badge" id="run-badge">running</span></div>
-    <div class="logbox" id="log"></div>
-  </section>
+    <nav>
+      <button class="navitem on" id="nav-runs">
+        <span class="ms-icon" style="font-size:20px">format_list_bulleted</span>My runs
+      </button>
+      <button class="navitem" id="nav-new">
+        <span class="ms-icon" style="font-size:20px">add_circle</span>New run
+      </button>
+      <div class="navitem dead">
+        <span class="ms-icon" style="font-size:20px">report</span>Reports
+      </div>
+      <div class="navitem dead">
+        <span class="ms-icon" style="font-size:20px">menu_book</span>Help
+      </div>
+    </nav>
 
-  <!-- STEP 4 : results -->
-  <section class="card hide" id="card-res">
-    <div class="stepline"><span class="step">4</span><h2>Results</h2>
-      <button class="btn" id="btn-rerun" style="margin-left:auto"
-              title="Run the reconciliation again on the same folders">&#8635; Run again</button></div>
-    <div id="res-sets"></div>
-    <div class="dlrow" id="res-downloads"></div>
-    <h3>Dashboard</h3>
-    <p class="hint">The full finance dashboard, with the interactive migration matrix and engine results.
-      <a id="res-open" href="#" target="_blank" rel="noopener">Open in a new tab &nearr;</a></p>
-    <iframe id="res-frame" title="Reconciliation dashboard"></iframe>
-  </section>
-
-  <!-- STEP 5 : ask about this run -->
-  <section class="card hide" id="card-chat">
-    <div class="stepline"><span class="step">5</span><h2>Ask about this run</h2></div>
-    <div class="chatlog" id="chat-log"></div>
-    <div class="chatrow">
-      <textarea id="chat-input" class="chatbox" rows="2"
-                placeholder="e.g. why is the 5&rarr;5 cell bigger than the default count?"></textarea>
-      <button class="btn primary" id="btn-chat">Send</button>
+    <div class="sideuser">
+      <div class="sq" id="user-initials">&mdash;</div>
+      <div class="who">
+        <b>Risk analyst</b>
+        <span id="user-email"></span>
+      </div>
+      <button id="btn-signout" title="Sign out"><span class="ms-icon">logout</span></button>
     </div>
-    <p class="hint">Each question sends masked query results to the Claude API and costs a few cents.</p>
-  </section>
+  </aside>
 
-</main>
+  <div class="main">
 
-<footer class="wrap">
-  <p>Check 1 &mdash; every default (Bucket&nbsp;0) should appear in the write-off file or the IFRS9 file; those in
-     neither are <b>untraced</b>. &nbsp; Check 2 &mdash; the reverse: scored accounts written off but
-     <b>never flagged as a default</b>, with the ones written off inside the scoring window flagged as the
-     priority exceptions.</p>
-</footer>
+    <!-- ============ SCREEN: my runs ============ -->
+    <section id="screen-runs">
+      <div class="pagehead">
+        <div class="grow">
+          <h1>My runs</h1>
+          <p>Every reconciliation you have run, with its sets and outcome.</p>
+        </div>
+        <div class="actions" style="margin-top:0">
+          <button class="btn primary" id="btn-new-run">
+            <span class="ms-icon" style="font-size:20px">add</span>New run
+          </button>
+        </div>
+      </div>
+
+      <div class="wrap">
+        <div class="tiles" id="stat-tiles"></div>
+
+        <div class="card hide" id="card-trend">
+          <div class="cardhead">
+            <span>Untraced defaults per run</span>
+            <span class="sub">last 6 completed runs</span>
+          </div>
+          <div class="trend" id="trend"></div>
+        </div>
+
+        <div class="card" id="card-history">
+          <div class="cardhead"><span>Run history</span></div>
+          <div style="overflow-x:auto">
+            <table class="grid" id="history-table"></table>
+          </div>
+          <div class="cardbody hide" id="history-empty">
+            <p class="muted" style="margin:0">No runs yet. Choose <b>New run</b> to reconcile your first set of folders.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SCREEN: new run wizard ============ -->
+    <section id="screen-wizard" class="hide">
+      <div class="pagehead">
+        <div class="grow">
+          <p class="eyebrow">New reconciliation</p>
+          <h1 id="step-title">Choose your analysis folders</h1>
+        </div>
+        <button class="btn ghost" id="btn-cancel">Cancel</button>
+      </div>
+
+      <div class="rail" id="rail">
+        <div class="st on" data-step="0">
+          <div class="n">1</div>
+          <div class="tx"><b>Folders</b><span>Pick up to four</span></div>
+          <div class="line"></div>
+        </div>
+        <div class="st" data-step="1">
+          <div class="n">2</div>
+          <div class="tx"><b>Confirm</b><span>What was found</span></div>
+          <div class="line"></div>
+        </div>
+        <div class="st" data-step="2">
+          <div class="n">3</div>
+          <div class="tx"><b>Run</b><span>Checks and engine</span></div>
+          <div class="line"></div>
+        </div>
+        <div class="st" data-step="3">
+          <div class="n">4</div>
+          <div class="tx"><b>Results</b><span>Review and ask</span></div>
+          <div class="line"></div>
+        </div>
+      </div>
+
+      <div class="wrap">
+
+        <!-- step 1 : folders -->
+        <div class="card" id="card-paths">
+          <div class="cardhead"><span>Analysis folders</span></div>
+          <div class="cardbody">
+            <p class="hint" style="margin:0 0 14px">Choose each analysis folder (up to 4).
+              Each folder holds everything for its run: the write-off CSV, the IFRS9 CSV,
+              <code>debug.zip</code> (or the extracted files) and <code>scenario.json</code>.
+              The folder's contents are uploaded, so a large folder takes a moment.</p>
+
+            <div id="paths"></div>
+            <button class="btn" id="btn-add-path">
+              <span class="ms-icon" style="font-size:20px">add</span>Add another folder
+            </button>
+
+            <div class="actions">
+              <button class="btn primary big" id="btn-check" disabled>
+                Check folders<span class="ms-icon" style="font-size:20px">arrow_forward</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 2 : confirm -->
+        <div class="card hide" id="card-inv">
+          <div class="cardhead"><span>Inventory</span></div>
+          <div class="cardbody">
+            <p class="muted" id="inv-root"></p>
+            <div id="inv-problems"></div>
+            <div style="overflow-x:auto"><table class="grid" id="inv-table"></table></div>
+            <div class="actions">
+              <div class="modelrow">
+                <label for="model">AI analysis model</label>
+                <select id="model"></select>
+                <span class="hint" id="model-note" style="margin:0"></span>
+              </div>
+              <button class="btn primary big" id="btn-run">Run reconciliation</button>
+            </div>
+            <p class="hint">Two checks per set, plus migrations and engine results.</p>
+          </div>
+        </div>
+
+        <!-- step 3 : progress -->
+        <div class="card hide" id="card-run">
+          <div class="cardhead">
+            <span>Progress</span>
+            <span class="badge" id="run-badge">running</span>
+          </div>
+          <div class="cardbody">
+            <div class="logbox" id="log"></div>
+          </div>
+        </div>
+
+        <!-- step 4 : results -->
+        <div class="card hide" id="card-res">
+          <div class="cardhead">
+            <span>Results</span>
+            <button class="btn clear" id="btn-rerun"
+                    title="Run the reconciliation again on the same folders">&#8635; Run again</button>
+          </div>
+          <div class="cardbody">
+            <div id="res-sets"></div>
+            <div class="dlrow" id="res-downloads"></div>
+            <h3>Dashboard</h3>
+            <p class="hint" style="margin-top:0">The full finance dashboard, with the interactive migration
+              matrix and engine results.
+              <a id="res-open" href="#" target="_blank" rel="noopener">Open in a new tab &nearr;</a></p>
+            <iframe id="res-frame" title="Reconciliation dashboard"></iframe>
+          </div>
+        </div>
+
+        <!-- step 4 : chat -->
+        <div class="card hide" id="card-chat">
+          <div class="cardhead"><span>Ask about this run</span></div>
+          <div class="cardbody">
+            <div class="chatlog" id="chat-log"></div>
+            <div class="chatrow">
+              <textarea id="chat-input" class="chatbox" rows="2"
+                        placeholder="e.g. why is the 5&rarr;5 cell bigger than the default count?"></textarea>
+              <button class="btn primary" id="btn-chat">Send</button>
+            </div>
+            <p class="hint">Each question sends masked query results to the selected model and costs a few cents.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardhead"><span>What the checks mean</span></div>
+          <div class="cardbody">
+            <p class="hint" style="margin:0"><b>Check 1</b> &mdash; every default (Bucket&nbsp;0) should appear in
+              the write-off file or the IFRS9 file; those in neither are <b>untraced</b>.</p>
+            <p class="hint"><b>Check 2</b> &mdash; the reverse: scored accounts written off but
+              <b>never flagged as a default</b>, with the ones written off inside the scoring window flagged as
+              the priority exceptions.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="app.js"></script>

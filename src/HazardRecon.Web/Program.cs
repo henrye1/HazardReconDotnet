@@ -554,16 +554,25 @@ app.MapGet("/api/runs", async (HttpContext ctx) =>
 
     IReadOnlyList<RunRecord> runs = await runStore.ListAsync(historyUser.Value);
 
-    return Results.Ok(runs.Select(r => new
+    return Results.Ok(runs.Select(r =>
     {
-        id = r.Id,
-        status = r.Status,
-        model_id = r.ModelId,
-        set_labels = r.SetLabels,
-        created_at = r.CreatedAt,
-        finished_at = r.FinishedAt,
-        error = r.Error,
-        inputs_purged = r.InputsPurgedAt != null
+        RunSummary summary = RunSummary.From(r.Result);
+        return new
+        {
+            id = r.Id,
+            status = r.Status,
+            model_id = r.ModelId,
+            set_labels = r.SetLabels,
+            created_at = r.CreatedAt,
+            finished_at = r.FinishedAt,
+            error = r.Error,
+            inputs_purged = r.InputsPurgedAt != null,
+            // drives the stat tiles and the trend, read from the stored result so
+            // the list can never disagree with the run it describes
+            sets = summary.Sets,
+            untraced = summary.Untraced,
+            trace_rate = summary.TraceRate
+        };
     }));
 }).RequireAuthorization();
 

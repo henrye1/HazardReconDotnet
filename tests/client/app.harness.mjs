@@ -26,6 +26,11 @@ function makeEl(id = "") {
       _s: new Set(),
       add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
       contains(c) { return this._s.has(c); },
+      toggle(c, force) {
+        const on = force === undefined ? !this._s.has(c) : !!force;
+        if (on) this._s.add(c); else this._s.delete(c);
+        return on;
+      },
     },
     // assigning innerHTML replaces the children, as it does in a browser.
     // loadModels() relies on this to clear stale <option>s before refilling.
@@ -484,6 +489,69 @@ async function scenarioO() {
     `info='${h.$get("#path1-info").textContent}'`);
 }
 
+/* ---------------- R: the two screens and the step rail ---------------- */
+async function scenarioR() {
+  console.log("R) screens switch and the rail tracks the wizard's position");
+  const runs = [
+    { id: "r1", status: "done", set_labels: ["JUN 2026"], created_at: "2026-07-01T09:00:00Z",
+      sets: 2, untraced: 12, trace_rate: 97.5 },
+    { id: "r2", status: "error", set_labels: ["MAY 2026"], created_at: "2026-06-01T09:00:00Z",
+      sets: 0, untraced: 0, trace_rate: 0 },
+  ];
+  const h = bootAuth({ access_token: "tok-abc" }, (url) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/runs") return Promise.resolve(jsonRes(200, runs));
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  // note: the stub builds elements on demand with no classes, so it cannot model
+  // the class="hide" the markup starts with - only explicit toggles are checked
+  check("stat tiles rendered", /Runs this month/.test(h.$get("#stat-tiles").innerHTML));
+  check("history shows both runs", /JUN 2026/.test(h.$get("#history-table").innerHTML) &&
+    /MAY 2026/.test(h.$get("#history-table").innerHTML));
+  check("a failed run gets no Open button",
+    (h.$get("#history-table").innerHTML.match(/data-run/g) || []).length === 1,
+    h.$get("#history-table").innerHTML.slice(0, 200));
+
+  // New run swaps screens and resets to step 1
+  h.$get("#btn-new-run")._fire("click");
+  check("wizard shown after New run", !h.$get("#screen-wizard").classList.contains("hide"));
+  check("runs screen hidden", h.$get("#screen-runs").classList.contains("hide"));
+  check("title is step 1", /Choose your analysis folders/.test(h.$get("#step-title").textContent),
+    `title='${h.$get("#step-title").textContent}'`);
+
+  // the flow moves the rail forward
+  h.ctx.showInventory({ run_id: "RID1", inventory: { root: "r", sets: [] }, problems: [] });
+  check("title moves to step 2", /Confirm what was found/.test(h.$get("#step-title").textContent),
+    `title='${h.$get("#step-title").textContent}'`);
+
+  // Cancel returns to the list
+  h.$get("#btn-cancel")._fire("click");
+  check("cancel returns to runs", !h.$get("#screen-runs").classList.contains("hide"));
+  check("cancel hides the wizard", h.$get("#screen-wizard").classList.contains("hide"));
+}
+
+/* ---------------- S: a new run clears the previous one ---------------- */
+async function scenarioS() {
+  console.log("S) starting a new run clears the results of the last one");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  // land on results, as reopening a stored run does
+  h.ctx.showResults({ sets: [], workbook: "w.xlsx", dashboard: "d.html", memo: null });
+  check("results visible", !h.$get("#card-res").classList.contains("hide"));
+
+  h.$get("#nav-new")._fire("click");
+
+  // without the reset the old results sit under a fresh folder picker
+  check("results cleared for the new run", h.$get("#card-res").classList.contains("hide"));
+  check("chat cleared", h.$get("#card-chat").classList.contains("hide"));
+  check("folder picker shown again", !h.$get("#card-paths").classList.contains("hide"));
+  check("back to step 1", /Choose your analysis folders/.test(h.$get("#step-title").textContent));
+}
+
 async function scenarioQ() {
   console.log("Q) the browser adopts the server's size limit rather than its own");
   // server says 100 MB; a 150 MB folder must be refused even though the
@@ -573,6 +641,6 @@ async function scenarioN() {
 
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
-                 scenarioO, scenarioP, scenarioQ]) { await s(); console.log(""); }
+                 scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

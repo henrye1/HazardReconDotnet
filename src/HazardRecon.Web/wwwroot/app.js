@@ -67,7 +67,11 @@ function startSession() {
     })
     .then((res) => {
       const session = res && res.data ? res.data.session : null;
-      if (session) { TOKEN = session.access_token; hideGate(); openDownloadSession(); loadModels(); loadHistory(); }
+      if (session) {
+        TOKEN = session.access_token;
+        showIdentity(session);
+        hideGate(); openDownloadSession(); loadModels(); loadHistory();
+      }
       else { showGate(""); }
     });
 }
@@ -91,6 +95,7 @@ $("#btn-signin").addEventListener("click", () => {
   SB.auth.signInWithPassword(c).then(({ data, error }) => {
     if (error) { $("#auth-msg").textContent = error.message; return; }
     TOKEN = data.session.access_token;
+    showIdentity(data.session);
     hideGate();
     openDownloadSession();
     loadModels();
@@ -117,27 +122,142 @@ $("#btn-signout").addEventListener("click", () => {
 
 startSession();
 
+/* ---------- screens ---------- */
+/* Two screens share one page: the run list and the new-run wizard. Nothing is
+   fetched on switching - the wizard keeps whatever state it already had, so
+   flipping to the list mid-run and back does not lose the progress log. */
+function showScreen(name) {
+  const wizard = name === "wizard";
+  $("#screen-runs").classList.toggle("hide", wizard);
+  $("#screen-wizard").classList.toggle("hide", !wizard);
+  $("#nav-runs").classList.toggle("on", !wizard);
+  $("#nav-new").classList.toggle("on", wizard);
+  if (!wizard) loadHistory();
+}
+
+/* Puts the wizard back at step 1 with nothing carried over. Reopening a stored
+   run leaves the later cards showing, so starting a new one has to clear them
+   or the previous run's results sit under a fresh folder picker. */
+function resetWizard() {
+  RUN_ID = null;
+  stopPolling();
+  setStep(0);
+  $("#card-paths").classList.remove("hide");
+  ["#card-inv", "#card-run", "#card-res", "#card-chat"].forEach(s => $(s).classList.add("hide"));
+  $("#chat-log").innerHTML = "";
+  showScreen("wizard");
+}
+
+/* Shows who is signed in, from the session rather than a second lookup. */
+function showIdentity(session) {
+  const email = (session && session.user && session.user.email) || "";
+  $("#user-email").textContent = email;
+  $("#user-initials").textContent = email ? email.slice(0, 2).toUpperCase() : "—";
+}
+
+/* The rail is the only place the wizard's position is expressed; each card
+   still shows and hides itself as the flow moves. */
+const STEP_TITLES = [
+  "Choose your analysis folders",
+  "Confirm what was found",
+  "Running the reconciliation",
+  "Results",
+];
+
+function setStep(n) {
+  $("#step-title").textContent = STEP_TITLES[n] || STEP_TITLES[0];
+  const rail = $("#rail");
+  const steps = rail.children || [];
+  for (let i = 0; i < steps.length; i++) {
+    const st = steps[i];
+    if (!st.classList) continue;
+    st.classList.remove("on");
+    st.classList.remove("was");
+    if (i < n) st.classList.add("was");
+    else if (i === n) st.classList.add("on");
+  }
+}
+
+$("#nav-runs").addEventListener("click", () => showScreen("runs"));
+$("#nav-new").addEventListener("click", resetWizard);
+$("#btn-new-run").addEventListener("click", resetWizard);
+$("#btn-cancel").addEventListener("click", () => showScreen("runs"));
+
 /* ---------- run history ---------- */
+const STATUS_LABEL = {
+  done: "complete", running: "running", error: "failed",
+  interrupted: "interrupted", ready: "draft",
+};
+
+function renderStats(runs) {
+  const done = runs.filter(r => r.status === "done");
+  const month = new Date();
+  month.setDate(1); month.setHours(0, 0, 0, 0);
+
+  const thisMonth = runs.filter(r => new Date(r.created_at) >= month).length;
+  const sets = done.reduce((n, r) => n + (r.sets || 0), 0);
+  const untraced = done.reduce((n, r) => n + (r.untraced || 0), 0);
+  const rated = done.filter(r => r.trace_rate > 0);
+  const avg = rated.length
+    ? (rated.reduce((n, r) => n + r.trace_rate, 0) / rated.length).toFixed(1) + "%"
+    : "&mdash;";
+
+  const tiles = [
+    ["Runs this month", fmt(thisMonth)],
+    ["Sets reconciled", fmt(sets)],
+    ["Average traced", avg],
+    ["Untraced defaults", fmt(untraced)],
+  ];
+
+  $("#stat-tiles").innerHTML = tiles
+    .map(([label, value]) => `<div class="tile"><span class="num">${value}</span><p class="lbl">${label}</p></div>`)
+    .join("");
+}
+
+function renderTrend(runs) {
+  // newest last, so the bars read left to right in time order
+  const recent = runs.filter(r => r.status === "done").slice(0, 6).reverse();
+  if (recent.length < 2) { $("#card-trend").classList.add("hide"); return; }
+
+  const peak = Math.max(1, ...recent.map(r => r.untraced || 0));
+  $("#card-trend").classList.remove("hide");
+  $("#trend").innerHTML = recent.map(r => {
+    const v = r.untraced || 0;
+    const pct = Math.max(2, Math.round((v / peak) * 100));
+    const when = new Date(r.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    return `<div class="bar"><b>${fmt(v)}</b><i style="height:${pct}%"></i><span>${when}</span></div>`;
+  }).join("");
+}
+
 function loadHistory() {
   return api("/api/runs")
     .then(readJson)
     .then(({ ok, j }) => {
-      if (!ok || !Array.isArray(j) || j.length === 0) {
-        $("#card-history").classList.add("hide");
-        return;
-      }
+      const runs = (ok && Array.isArray(j)) ? j : [];
 
-      $("#card-history").classList.remove("hide");
+      renderStats(runs);
+      renderTrend(runs);
+
+      $("#history-empty").classList.toggle("hide", runs.length > 0);
+      $("#history-table").classList.toggle("hide", runs.length === 0);
+      if (runs.length === 0) return;
+
       $("#history-table").innerHTML =
-        "<tr><th>When</th><th>Folders</th><th>Status</th><th></th></tr>" +
-        j.map(r => {
+        "<tr><th>Started</th><th>Sets</th><th>Traced</th><th>Untraced</th>" +
+        "<th>Status</th><th style='text-align:right'></th></tr>" +
+        runs.map(r => {
           const when = new Date(r.created_at).toLocaleString();
           const labels = (r.set_labels || []).join(", ") || "&mdash;";
-          const reopen = r.status === "done"
-            ? `<button class="btn" data-run="${r.id}">Open</button>`
+          const traced = r.trace_rate > 0 ? r.trace_rate.toFixed(1) + "%" : "&mdash;";
+          const untraced = r.status === "done" ? fmt(r.untraced || 0) : "&mdash;";
+          const label = STATUS_LABEL[r.status] || r.status;
+          const open = r.status === "done"
+            ? `<button class="btn clear" data-run="${r.id}">Open</button>`
             : "";
-          return `<tr><td>${when}</td><td>${labels}</td>` +
-                 `<td>${r.status}</td><td>${reopen}</td></tr>`;
+          return `<tr><td>${when}<div class="muted" style="font-size:12px">${labels}</div></td>` +
+                 `<td>${fmt(r.sets || 0)}</td><td>${traced}</td><td>${untraced}</td>` +
+                 `<td><span class="chip ${r.status}">${label}</span></td>` +
+                 `<td style="text-align:right">${open}</td></tr>`;
         }).join("");
 
       Array.from($("#history-table").querySelectorAll
@@ -155,6 +275,15 @@ function openRun(id) {
     .then(({ ok, j }) => {
       if (!ok || !j || !j.result) return;
       RUN_ID = j.id;
+
+      // a stored run opens straight at its results; there is nothing to pick or
+      // confirm, so the earlier steps stay closed
+      showScreen("wizard");
+      setStep(3);
+      $("#card-paths").classList.add("hide");
+      $("#card-inv").classList.add("hide");
+      $("#card-run").classList.add("hide");
+
       showResults(j.result);
       $("#card-chat").classList.remove("hide");
 
@@ -324,6 +453,7 @@ function showError(card, msg) {
 
 function showInventory(j) {
   RUN_ID = j.run_id;
+  setStep(1);
   const card = $("#card-inv");
   card.classList.remove("hide");
   const old = card.querySelector(".err"); if (old) old.remove();
@@ -373,6 +503,7 @@ function failRun(msg) {
 function beginRun() {
   if (!RUN_ID) return;
   stopPolling();
+  setStep(2);
   $("#card-run").classList.remove("hide");
   $("#card-res").classList.add("hide");
   $("#log").innerHTML = "";
@@ -469,6 +600,7 @@ const escapeHtml = (s) => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<":
 /* ---------- step 4: results ---------- */
 function showResults(res) {
   if (!res) return;
+  setStep(3);
   const card = $("#card-res");
   card.classList.remove("hide");
 
