@@ -20,6 +20,7 @@
   --cl-card-background-color:#fff;
   --cl-block-accent-color:#f4f5fa;
   --cl-border-color:#dbe3f1;
+  --cl-cell-border-color:#f2f2f2;
   --cl-card-outline-color:#0b188f26;
   --cl-hover-color:#f0f0f0;
   --cl-grey-color-light:#cfcfcf;
@@ -142,11 +143,18 @@ body{
 .pagehead h1{margin:0;font-size:24px;line-height:31px;font-weight:800;color:var(--cl-primary-color)}
 .pagehead p{margin:4px 0 0;font-size:14px;color:var(--cl-off-text-color)}
 .pagehead .eyebrow{
-  margin:0 0 2px;font-size:12px;font-weight:600;letter-spacing:.04em;
+  margin:0 0 4px;font-size:12px;font-weight:400;letter-spacing:.06em;
   text-transform:uppercase;color:var(--cl-off-text-color);
 }
+/* the wizard centres its header; the run list aligns to the baseline */
+.pagehead.mid{align-items:center;flex-wrap:nowrap}
 
 .wrap{max-width:1280px;margin:0 auto;width:100%;padding:30px 40px 60px;display:grid;gap:20px}
+/* the wizard runs slightly narrower than the run list */
+.wrap.narrow{max-width:1180px}
+/* a step that stacks its own cards, and the two-up folders step */
+.stepgrid{display:grid;gap:20px}
+.cols2{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:20px;align-items:start}
 
 /* ---------- cards ---------- */
 .card{
@@ -195,23 +203,28 @@ table.grid th{
   text-align:left;font-weight:400;color:var(--cl-off-text-color);
   padding:15px 20px;white-space:nowrap;border-bottom:1px solid var(--cl-border-color);
 }
-table.grid td{padding:15px 20px;border-bottom:1px solid var(--cl-border-color);vertical-align:middle}
-/* column rules, as the reference draws them */
-table.grid th:not(:last-child),table.grid td:not(:last-child){
-  border-right:1px solid var(--cl-border-color);
+/* the reference boxes every body cell in grey, not in the blue border colour
+   it uses under the header row */
+table.grid td{
+  padding:15px 20px;border:1px solid var(--cl-cell-border-color);vertical-align:middle;
 }
-table.grid tr:last-child td{border-bottom:0}
 table.grid tbody tr:hover{background:var(--cl-block-accent-color)}
+/* figures right-aligned on a fixed width, so columns compare down the page */
+table.grid .num{text-align:right;font-variant-numeric:tabular-nums}
+table.grid td.dur{color:var(--cl-off-text-color)}
+table.grid td.untraced{font-weight:600}
+/* the run reference over the set labels it covers */
+.runid{display:grid;gap:2px}
+.runid b{font-size:14px;font-weight:700;color:var(--cl-primary-color)}
+.runid span{font-size:13px;color:var(--cl-off-text-color)}
+table.grid tr.clickable{cursor:pointer}
 .tablefoot{
   display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
   padding:14px 20px;border-top:1px solid var(--cl-border-color);
   font-size:13px;color:var(--cl-off-text-color);
 }
-.rowgo{
-  background:transparent;border:0;padding:4px;cursor:pointer;
-  color:var(--cl-primary-color);font-size:22px;line-height:1;
-}
-.rowgo:hover{color:var(--cl-action-color)}
+.rowgo{color:var(--cl-primary-color);font-size:20px;line-height:1;vertical-align:middle}
+tr.clickable:hover .rowgo{color:var(--cl-action-color)}
 .no{color:var(--cl-error-color);font-weight:600}
 .ok{color:var(--cl-success-color);font-weight:600}
 
@@ -228,24 +241,26 @@ table.grid tbody tr:hover{background:var(--cl-block-accent-color)}
   border-color:var(--cl-status-failed-border)}
 
 /* ---------- step rail ---------- */
-.rail{display:flex;gap:0;padding:18px 40px;background:#fff;
-  border-bottom:1px solid var(--cl-border-color);flex-wrap:wrap}
-.rail .st{display:flex;align-items:center;gap:12px;flex:1;min-width:170px}
-.rail .st .n{
-  width:32px;height:32px;flex:none;border-radius:50%;display:grid;place-items:center;
-  font-size:14px;font-weight:700;background:var(--cl-primary-50);color:var(--cl-primary-color);
+/* the white band spans the page; the steps themselves are centred within it */
+.rail{padding:22px 40px;background:#fff;border-bottom:1px solid var(--cl-border-color)}
+.railinner{max-width:1000px;margin:0 auto;display:flex;align-items:center;flex-wrap:wrap}
+.railinner .st{display:flex;align-items:center;flex:1;min-width:170px}
+.railinner .st .n{
+  width:44px;height:44px;flex:none;display:grid;place-items:center;
+  font-size:15px;font-weight:700;background:var(--cl-primary-50);color:var(--cl-primary-color);
 }
-.rail .st.on .n{background:var(--cl-primary-color);color:#fff}
-.rail .st.was .n{background:var(--cl-action-color);color:#fff}
-.rail .st .tx{display:grid;gap:1px;min-width:0}
-.rail .st .tx b{font-size:14px;font-weight:700}
-.rail .st .tx span{font-size:12px;color:var(--cl-off-text-color)}
-.rail .st .line{flex:1;height:1px;background:var(--cl-border-color);margin:0 8px}
-.rail .st:last-child .line{display:none}
+.railinner .st.on .n{background:var(--cl-primary-color);color:#fff}
+.railinner .st.was .n{background:var(--cl-action-color);color:#fff}
+.railinner .st .tx{display:grid;gap:2px;min-width:0;margin-left:12px}
+.railinner .st .tx b{font-size:14px;font-weight:700;white-space:nowrap}
+.railinner .st .tx span{font-size:12px;color:var(--cl-off-text-color);white-space:nowrap}
+.railinner .st .line{flex:1;height:2px;background:var(--cl-border-color);margin:0 16px;min-width:20px}
+.railinner .st:last-child .line{display:none}
 
 /* ---------- controls ---------- */
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .actions{display:flex;align-items:center;gap:14px;margin-top:16px;flex-wrap:wrap}
+.actions.right{justify-content:flex-end}
 .lbl{display:block;font-size:12px;color:var(--cl-off-text-color);margin-bottom:6px}
 
 input[type=text],input[type=email],input[type=password],select,textarea{
@@ -294,15 +309,75 @@ input[type=file]::file-selector-button:hover{background:var(--cl-hover-color)}
 .btn.primary:disabled:hover{background:var(--cl-action-color)}
 .btn.clear{height:32px;padding:0 10px;font-size:12px;color:var(--cl-error-color);border-color:transparent}
 .btn.ghost{border-color:transparent;background:transparent}
+.btn.indigo{background:var(--cl-primary-color);border-color:var(--cl-primary-color);color:#fff}
+.btn.indigo:hover{background:var(--cl-primary-700)}
+
+/* the wizard's cards sit a little tighter than the rest of the app */
+.cols2 .cardbody,.stepgrid .cardbody{padding:15px}
 
 /* ---------- folder slots ---------- */
 .slot{
   border:1px solid var(--cl-border-color);border-radius:var(--border-radius);
   padding:14px 16px;margin-bottom:12px;background:#fff;
+  display:flex;align-items:flex-start;gap:14px;
 }
-.slothead{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:14px}
-.slothead b{font-weight:700}
-.slothead .btn.clear{margin-left:auto}
+.slot>.ms-icon{font-size:24px;color:var(--cl-primary-color);flex:none}
+.slot .sx{flex:1;min-width:0;display:grid;gap:6px}
+.slot .sx .num{
+  font-size:12px;color:var(--cl-off-text-color);text-transform:uppercase;letter-spacing:.06em;
+}
+.slot .sx .name{
+  font-size:15px;font-weight:700;color:var(--cl-text-color);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.slot .sx .meta{font-size:13px;color:var(--cl-off-text-color)}
+.slot .sx .meta.bad{color:var(--cl-error-color);font-weight:600}
+/* the picker itself is only reachable through the folder name, which acts as the
+   button - a bare file input is not what the reference shows */
+.slot input[type=file]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.slot .pick{
+  background:transparent;border:0;padding:0;cursor:pointer;text-align:left;
+  font-family:var(--font-family);font-size:15px;font-weight:700;color:var(--cl-primary-color);
+}
+.slot .pick:hover{color:var(--cl-action-color)}
+.slot .x{
+  border:0;background:transparent;cursor:pointer;padding:4px;display:flex;
+  color:var(--cl-off-text-color);flex:none;
+}
+.slot .x:hover{color:var(--cl-error-color)}
+
+/* dashed call to action, distinct from a real button */
+.addfolder{
+  width:100%;border:1px dashed var(--cl-border-color);background:var(--cl-block-accent-color);
+  border-radius:var(--border-radius);padding:14px 16px;display:flex;align-items:center;
+  justify-content:center;gap:10px;cursor:pointer;font-family:var(--font-family);
+  font-size:14px;font-weight:600;color:var(--cl-primary-color);
+}
+.addfolder:hover{border-color:var(--cl-primary-color)}
+.addfolder:disabled{opacity:.5;cursor:default}
+
+/* ---------- what a folder must contain ---------- */
+.reqs{display:grid;gap:14px}
+.req{display:flex;gap:12px;align-items:flex-start}
+.req>.ms-icon{font-size:20px;color:var(--cl-primary-color);margin-top:1px;flex:none}
+.req>div{display:grid;gap:2px;min-width:0}
+.req b{font-size:14px;font-weight:600}
+.req span{font-size:13px;color:var(--cl-off-text-color);text-wrap:pretty}
+
+/* ---------- inventory ---------- */
+.okflag{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:13px;font-weight:600;color:var(--cl-success-color);
+}
+.path{font-size:13px;word-break:break-all}
+table.grid.tight th,table.grid.tight td{padding:12px 16px}
+table.grid td.setkey{font-weight:700;color:var(--cl-primary-color);white-space:nowrap}
+table.grid td.dim{color:var(--cl-off-text-color)}
+/* the tick beside each file that was found */
+table.grid .found{font-size:16px;color:var(--cl-action-color);vertical-align:-3px;margin-right:6px}
+table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3px;margin-right:6px}
+.runopts{display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap}
+.runopts .actions{margin-left:auto}
 
 /* ---------- messages ---------- */
 .err{
@@ -318,59 +393,195 @@ input[type=file]::file-selector-button:hover{background:var(--cl-hover-color)}
 .warn ul{margin:8px 0 0;padding-left:20px}
 .expects{margin-top:16px;border-top:1px solid var(--cl-border-color);padding-top:12px}
 
-.badge{
-  display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;
-  background:var(--cl-status-running-bg);color:var(--cl-status-running-text);
-  border:1px solid var(--cl-status-running-border);
+/* ---------- run progress ---------- */
+.runhead{
+  padding:18px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  border-bottom:1px solid var(--cl-border-color);
 }
-.badge.done{background:var(--cl-status-completed-bg);color:var(--cl-status-completed-text);
-  border-color:var(--cl-status-completed-border)}
-.badge.err{background:var(--cl-status-failed-bg);color:var(--cl-status-failed-text);
-  border-color:var(--cl-status-failed-border)}
+.runhead .rhl{font-size:15px;font-weight:600}
+.runhead .rmeta{
+  margin-left:auto;font-size:14px;color:var(--cl-off-text-color);font-variant-numeric:tabular-nums;
+}
+.progress{height:6px;background:var(--cl-block-accent-color)}
+.progress i{display:block;height:6px;background:var(--cl-action-color);transition:width .3s ease}
 
-/* ---------- progress log ---------- */
+.stages{padding:8px 0}
+.stage{
+  display:flex;align-items:flex-start;gap:16px;padding:13px 20px;
+  border-bottom:1px solid var(--cl-cell-border-color);
+}
+.stage:last-child{border-bottom:0}
+.stage>.ms-icon{font-size:22px;flex:none;margin-top:1px}
+.stage .sx{flex:1;min-width:0;display:grid;gap:3px}
+.stage .sx b{font-size:15px;font-weight:700}
+.stage .sx span{font-size:13px;color:var(--cl-off-text-color);text-wrap:pretty}
+.stage .t{
+  font-size:13px;color:var(--cl-off-text-color);font-variant-numeric:tabular-nums;flex:none;
+}
+/* a stage still to come is dimmed, so the eye lands on what is happening now */
+.stage.pending .sx b,.stage.skipped .sx b{color:var(--cl-off-text-color);font-weight:600}
+.stage.pending>.ms-icon,.stage.skipped>.ms-icon{color:var(--cl-grey-color-light)}
+.stage.running>.ms-icon{color:var(--cl-primary-color);animation:spin 1s linear infinite}
+.stage.done>.ms-icon{color:var(--cl-action-color)}
+.stage.warn>.ms-icon{color:var(--cl-warning-text)}
+.stage.error>.ms-icon{color:var(--cl-error-color)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.runfoot{padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.linkbtn{
+  border:0;background:transparent;padding:0;cursor:pointer;font-family:var(--font-family);
+  font-size:13px;font-weight:600;color:var(--cl-primary-color);
+  display:inline-flex;align-items:center;gap:6px;
+}
+.linkbtn:hover{color:var(--cl-action-color)}
+.runfoot .actions{margin-left:auto}
+
+/* ---------- raw engine log ---------- */
 .logbox{
-  background:#0d1330;color:#d7dcf5;border-radius:var(--border-radius);
-  padding:14px 16px;height:320px;overflow:auto;
-  font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.55;
+  padding:15px;max-height:320px;overflow:auto;background:#fff;
+  font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12.5px;line-height:1.9;
 }
-.logbox .ok{color:#8ce99a}
-.logbox .warn{color:#ffd43b;background:none;border:0;padding:0;margin:0}
-.logbox .tool{color:#8ab4ff}
-.logbox .head{color:#fff;font-weight:700}
+.logbox div{display:flex;gap:14px;white-space:pre-wrap}
+.logbox .t{color:var(--cl-subtext-color);flex:none}
+.logbox .ok{color:var(--cl-success-color);font-weight:400}
+.logbox .warn{color:var(--cl-warning-text);background:none;border:0;padding:0;margin:0;font-weight:600}
+.logbox .tool{color:var(--cl-primary-color)}
+.logbox .head{color:var(--cl-text-color);font-weight:700}
+.logbox .info{color:var(--cl-off-text-color)}
 
-/* ---------- results ---------- */
-.setcard{
-  border:1px solid var(--cl-border-color);border-radius:var(--border-radius);
-  padding:16px 18px;margin-bottom:14px;
+/* ---------- run detail ---------- */
+.detailhead{
+  background:#fff;border-bottom:1px solid var(--cl-border-color);padding:22px 40px 0;
 }
-.dlrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
-.dl{
-  display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 16px;
-  border:1px solid var(--cl-border-color);border-radius:var(--border-radius);
-  text-decoration:none;color:var(--cl-primary-color);font-size:14px;font-weight:600;background:#fff;
+.detailhead .linkbtn{margin:0 0 10px}
+.dhrow{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
+.dhtitle{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.dhtitle h1{margin:0;font-size:24px;line-height:31px;font-weight:800;color:var(--cl-primary-color)}
+.dhmeta{margin:6px 0 0;font-size:13px;color:var(--cl-off-text-color)}
+.dhacts{display:flex;align-items:center;gap:12px;padding-bottom:4px;flex-wrap:wrap}
+
+/* tabs sit on the header's bottom edge, the active one underlined */
+.tabs{display:flex;gap:28px;margin-top:18px;overflow-x:auto}
+.tab{
+  border:0;background:transparent;padding:0 0 12px;cursor:pointer;white-space:nowrap;
+  font-family:var(--font-family);font-size:15px;font-weight:600;
+  color:var(--cl-off-text-color);border-bottom:3px solid transparent;
 }
-.dl:hover{background:var(--cl-hover-color)}
-.dl.x{background:var(--cl-action-opacity-color);border-color:#c9e7bf}
+.tab:hover{color:var(--cl-primary-color)}
+.tab.on{color:var(--cl-primary-color);border-bottom-color:var(--cl-primary-color)}
+
+/* a set's own header is the strong one on this page */
+.cardhead.strong{background:var(--cl-primary-color);color:#fff;flex-wrap:wrap}
+.cardhead.strong .sub{color:var(--cl-action-opacity-color);font-weight:500}
+/* a card header that is itself the disclosure control */
+.cardhead.toggle{
+  width:100%;border:0;cursor:pointer;font-family:var(--font-family);
+  justify-content:flex-start;gap:8px;text-align:left;
+}
+.headlink{
+  font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;
+}
+
+/* the four figures on a set card */
+.ktiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:15px}
+.ktile{
+  background:var(--cl-block-accent-color);border-radius:var(--border-radius);
+  padding:16px 18px;display:grid;gap:6px;
+}
+.ktile .l,.ktile .s{font-size:12px;color:var(--cl-off-text-color)}
+.ktile .v{font-size:28px;line-height:1.1;font-weight:700;font-variant-numeric:tabular-nums}
+.ktile .v.bad{color:var(--cl-error-color)}
+.ktile .v.good{color:var(--cl-success-color)}
+.ktile .v.warn{color:var(--cl-warning-text);background:none;border:0;padding:0;margin:0}
+
+/* the pass/fail pills under each check */
+.rag{display:flex;gap:10px;flex-wrap:wrap}
+.rag span{
+  display:inline-flex;align-items:center;padding:5px 12px;border-radius:var(--border-radius);
+  font-size:13px;font-weight:600;border:1px solid transparent;
+}
+.rag .green{background:var(--cl-positive-background-color);color:var(--cl-success-color);
+  border-color:#bfe3ae}
+.rag .red{background:var(--cl-error-background-color);color:var(--cl-error-color);border-color:#f5c6cb}
+.rag .amber{background:var(--cl-warning-bg);color:#7a5b00;border-color:var(--cl-warning-border)}
+.rag .grey{background:var(--cl-block-accent-color);color:var(--cl-off-text-color);
+  border-color:var(--cl-border-color)}
+
+.checkbody{padding:15px;display:grid;gap:12px}
+.checkbody p{margin:0;font-size:14px;color:var(--cl-off-text-color);text-wrap:pretty}
+.checkbody p b{color:var(--cl-text-color)}
+.validrow{padding:15px;display:flex;align-items:center;gap:12px}
+.validrow .ms-icon{font-size:22px;flex:none}
+.validrow span.tx{font-size:14px}
+
 iframe#res-frame{
   width:100%;height:760px;border:1px solid var(--cl-border-color);
   border-radius:var(--border-radius);background:#fff;
 }
 
+/* ---------- output files ---------- */
+.frow{
+  display:flex;align-items:center;gap:16px;padding:14px 20px;
+  border-bottom:1px solid var(--cl-cell-border-color);
+}
+.frow:last-child{border-bottom:0}
+.frow>.ms-icon{font-size:24px;flex:none}
+.frow .fx{flex:1;min-width:0;display:grid;gap:2px}
+.frow .fx .n{
+  font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.frow .fx .note{font-size:12px;color:var(--cl-off-text-color)}
+.frow .sz{
+  font-size:13px;color:var(--cl-off-text-color);font-variant-numeric:tabular-nums;flex:none;
+}
+.frow .dl{
+  display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;flex:none;
+}
+
 .modelrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .modelrow label{font-size:14px;font-weight:600}
 
-/* ---------- chat ---------- */
-.chatlog{display:grid;gap:12px;max-height:460px;overflow:auto;margin-bottom:14px}
-.bubble{padding:12px 14px;border-radius:var(--border-radius);font-size:14px;max-width:80%}
-.bubble.user{background:var(--cl-primary-color);color:#fff;justify-self:end}
-.bubble.bot{background:var(--cl-block-accent-color);justify-self:start}
+/* ---------- chat drawer ---------- */
+.drawer{
+  position:fixed;top:0;right:0;z-index:40;width:min(390px,100vw);height:100vh;
+  background:#fff;border-left:1px solid var(--cl-border-color);
+  box-shadow:-4px 0 14px rgba(0,0,0,.14);display:flex;flex-direction:column;
+}
+.drawerhead{
+  padding:16px 18px;border-bottom:1px solid var(--cl-border-color);
+  display:flex;align-items:center;gap:12px;
+}
+.drawerhead .grow{flex:1;min-width:0;display:grid;gap:1px}
+.drawerhead .dt{font-size:15px;font-weight:700;color:var(--cl-primary-color)}
+.drawerhead .ds{font-size:12px;color:var(--cl-off-text-color)}
+.drawerhead .x{border:0;background:transparent;cursor:pointer;padding:4px;display:flex;
+  color:var(--cl-off-text-color)}
+.drawerhead .x:hover{color:var(--cl-error-color)}
+.drawerfoot{
+  padding:14px 18px;border-top:1px solid var(--cl-border-color);display:grid;gap:10px;
+}
+.drawerfoot .note{font-size:11.5px;color:var(--cl-off-text-color);text-wrap:pretty}
+.btn.block{width:100%;justify-content:center;height:38px}
+
+.chatlog{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
+.bubble{
+  max-width:88%;border-radius:var(--border-radius);padding:11px 13px;
+  font-size:13.5px;line-height:1.55;text-wrap:pretty;border:1px solid transparent;
+}
+.bubble.user{background:var(--cl-primary-color);color:#fff;align-self:flex-end}
+.bubble.bot{background:var(--cl-block-accent-color);align-self:flex-start;
+  border-color:var(--cl-border-color)}
 .bubble.bot.thinking{color:var(--cl-off-text-color)}
-.bubble.bot.err{background:var(--cl-error-background-color);color:var(--cl-error-color)}
+.bubble.bot.err{background:var(--cl-error-background-color);color:var(--cl-error-color);
+  border-color:#f5c6cb}
 .bubble p:first-child{margin-top:0}
 .bubble p:last-child{margin-bottom:0}
-.chatrow{display:flex;gap:10px;align-items:flex-start}
-.chatbox{flex:1;min-height:48px}
+.chatbox{
+  width:100%;box-sizing:border-box;resize:vertical;font-family:var(--font-family);
+  font-size:13.5px;padding:10px 12px;border:1px solid var(--cl-border-color);
+  border-radius:var(--border-radius);background:var(--cl-block-accent-color);
+  color:var(--cl-text-color);
+}
 
 /* ---------- auth gate ---------- */
 .authgate{

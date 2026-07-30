@@ -298,7 +298,10 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
     job.Log.Clear();
     job.Error = null;
     job.Result = null;
+    job.Stages = Array.Empty<RunStage>();
     job.Started = DateTime.Now.ToString("HH:mm:ss");
+    job.StartedAt = DateTimeOffset.UtcNow;
+    job.FinishedAt = null;
 
     void Logger(string msg, string kind) =>
         job.Log.Add(new Dictionary<string, string>
@@ -309,6 +312,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
         });
 
     var capturedJob = job;
+    StageReporter stages = new(list => capturedJob.Stages = list);
     _ = Task.Run(async () =>
     {
         try
@@ -321,7 +325,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
 
             ReconciliationRunResult outResult = engine.Run(
                 capturedJob.Roots, capturedJob.Outdir, logger: Logger,
-                analyze: analyst != null, analyst: analyst);
+                analyze: analyst != null, analyst: analyst, stages: stages);
 
             // Isolated on purpose: this aggregation only feeds /api/chat. It must never
             // turn a completed run (workbook/CSVs/dashboard already on disk) into an
@@ -356,15 +360,28 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 wo_post_window = kv.Value.Summary.WoPostWindow,
                 scored = kv.Value.Summary.ScoredDistinct,
                 ifrs9_overlap = kv.Value.Summary.Ifrs9KeyOverlap,
+                // the run detail reports the matrix comparison on its own card
+                mig_validation = kv.Value.Summary.MigValidation,
+                mig_max_diff = kv.Value.Summary.MigValidationMaxDiff,
                 files = kv.Value.Summary.Files
             }).ToList();
+
+            // the engine has finished; anything after this is bookkeeping
+            capturedJob.FinishedAt = DateTimeOffset.UtcNow;
 
             capturedJob.Result = new
             {
                 sets = setSummaries,
                 workbook = outResult.Workbook,
                 dashboard = outResult.Dashboard,
-                memo = outResult.Memo
+                memo = outResult.Memo,
+                // stored with the run so the stage list and file sizes survive a
+                // restart and a reopened run shows the same detail as a fresh one
+                stages = capturedJob.Stages,
+                elapsed_seconds = capturedJob.StartedAt == null
+                    ? (double?)null
+                    : Math.Round((capturedJob.FinishedAt.Value - capturedJob.StartedAt.Value).TotalSeconds, 1),
+                outputs = OutputFiles.Describe(capturedJob.Outdir, outResult)
             };
             capturedJob.Status = "done";
 
@@ -389,7 +406,12 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
             capturedJob.Error = $"{ex.GetType().Name}: {ex.Message}";
             capturedJob.Status = "error";
             Logger(capturedJob.Error, "warn");
+            // otherwise the progress screen keeps a row spinning on a dead run
+            stages.Settle(StageStatus.Error);
         }
+
+        // already set when the engine returned; this covers the failure path
+        capturedJob.FinishedAt ??= DateTimeOffset.UtcNow;
 
         try
         {
@@ -422,7 +444,12 @@ app.MapGet("/api/job/{rid}", (string rid, HttpContext ctx) =>
         status = job.Status,
         log = job.Log,
         error = job.Error,
-        result = job.Result
+        result = job.Result,
+        // drives the stage list, progress bar and elapsed clock
+        stages = job.Stages,
+        elapsed_seconds = job.StartedAt == null
+            ? (double?)null
+            : Math.Round(((job.FinishedAt ?? DateTimeOffset.UtcNow) - job.StartedAt.Value).TotalSeconds, 1)
     });
 }).RequireAuthorization();
 
@@ -571,7 +598,8 @@ app.MapGet("/api/runs", async (HttpContext ctx) =>
             // the list can never disagree with the run it describes
             sets = summary.Sets,
             untraced = summary.Untraced,
-            trace_rate = summary.TraceRate
+            trace_rate = summary.TraceRate,
+            exceptions = summary.Exceptions
         };
     }));
 }).RequireAuthorization();

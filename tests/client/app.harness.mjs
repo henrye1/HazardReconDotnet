@@ -22,6 +22,8 @@ function makeEl(id = "") {
     // file's webkitRelativePath, which is the only clue to the folder's name
     files: [],
     disabled: false, scrollTop: 0, scrollHeight: 0, parentNode: null,
+    // the progress bar sets style.width, so a plain bag of properties is enough
+    style: {},
     classList: {
       _s: new Set(),
       add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
@@ -145,7 +147,8 @@ function boot(fetchImpl, initialStorage = {}) {
 }
 
 const badge = (h) => h.$get("#run-badge").textContent;
-const errText = (h) => { const e = h.$get("#card-run").querySelector(".err"); return e ? e.textContent : null; };
+// the progress card is a step container now, and errors are appended to it
+const errText = (h) => { const e = h.$get("#step-run").querySelector(".err"); return e ? e.textContent : null; };
 const tick = () => new Promise(r => setTimeout(r, 0));
 
 // An unhandled rejection is the bug under test, not a harness crash: in a
@@ -175,7 +178,7 @@ async function scenarioA() {
   h.timers.armed();               // one poll -> 404
   await tick(); await tick();
   check("polling stopped", h.timers.armed === null, "still polling");
-  check("badge is 'error', not 'running'", badge(h) === "error", `badge='${badge(h)}'`);
+  check("badge is Failed, not Running", badge(h) === "Failed", `badge='${badge(h)}'`);
   check("explains the restart", /restarted/i.test(errText(h) || ""), `err='${errText(h)}'`);
   check("Run button re-enabled", h.$get("#btn-run").disabled === false);
 }
@@ -190,7 +193,7 @@ async function scenarioB() {
   h.ctx.beginRun();
   await tick(); await tick(); await tick();
   check("interval never armed", h.timers.armed === null);
-  check("badge is 'error', not 'running'", badge(h) === "error", `badge='${badge(h)}'`);
+  check("badge is Failed, not Running", badge(h) === "Failed", `badge='${badge(h)}'`);
   check("surfaces the 500", /500/.test(errText(h) || ""), `err='${errText(h)}'`);
   check("Run button re-enabled", h.$get("#btn-run").disabled === false);
 }
@@ -213,12 +216,19 @@ async function scenarioC() {
   await tick(); await tick();
   for (let i = 0; i < 3; i++) { h.timers.armed(); await tick(); await tick(); }
   check("survives 3 blips, still polling", h.timers.armed !== null, "gave up too early");
-  check("badge still 'running' during blips", badge(h) === "running", `badge='${badge(h)}'`);
+  check("badge still Running during blips", badge(h) === "Running", `badge='${badge(h)}'`);
   h.timers.armed();
   await tick(); await tick();
-  check("reaches 'complete'", badge(h) === "complete", `badge='${badge(h)}'`);
+  check("reaches Completed", badge(h) === "Completed", `badge='${badge(h)}'`);
   check("polling stopped", h.timers.armed === null);
-  check("results card shown", h.$get("#card-res").classList.contains("hide") === false);
+  // results are a step of their own now, reached from the button rather than
+  // appearing under the progress card
+  check("results offered", h.$get("#btn-view-results").disabled === false);
+  h.$get("#btn-view-results")._fire("click");
+  // results are their own screen, so the wizard is left behind entirely
+  check("the run detail opens", h.$get("#screen-detail").classList.contains("hide") === false);
+  check("the wizard is left behind", h.$get("#screen-wizard").classList.contains("hide"));
+  check("the summary tab is the one showing", h.$get("#tab-summary").classList.contains("hide") === false);
 }
 
 /* ---------------- D: server gone for good ---------------- */
@@ -232,7 +242,7 @@ async function scenarioD() {
   await tick(); await tick();
   for (let i = 0; i < 12; i++) { if (h.timers.armed) { h.timers.armed(); await tick(); await tick(); } }
   check("gives up rather than spinning forever", h.timers.armed === null);
-  check("badge is 'error'", badge(h) === "error", `badge='${badge(h)}'`);
+  check("badge is Failed", badge(h) === "Failed", `badge='${badge(h)}'`);
   check("Run button re-enabled", h.$get("#btn-run").disabled === false);
 }
 
@@ -248,7 +258,7 @@ async function scenarioE() {
   await tick(); await tick();
   h.timers.armed();
   await tick(); await tick();
-  check("does not sit on a bare 'complete' with no results", badge(h) === "error", `badge='${badge(h)}'`);
+  check("does not sit on a bare Completed with no results", badge(h) === "Failed", `badge='${badge(h)}'`);
   check("polling stopped", h.timers.armed === null);
 }
 
@@ -467,10 +477,14 @@ async function scenarioO() {
   h.$get("#path1")._fire("change");
 
   check("check button enabled once a folder is chosen", h.$get("#btn-check").disabled === false);
-  check("the folder name and size are shown",
-    /JUNE 2026 0\.5 PERCENT/.test(h.$get("#path1-info").textContent) &&
-    /2 files/.test(h.$get("#path1-info").textContent),
+  // the folder's name is the row's heading; the size sits under it
+  check("the folder name becomes the heading",
+    /JUNE 2026 0\.5 PERCENT/.test(h.$get("#path1-pick").textContent),
+    `pick='${h.$get("#path1-pick").textContent}'`);
+  check("the size is shown", /2 files/.test(h.$get("#path1-info").textContent),
     `info='${h.$get("#path1-info").textContent}'`);
+  check("the folder count is shown", /1 of 4/.test(h.$get("#folder-count").textContent),
+    `count='${h.$get("#folder-count").textContent}'`);
 
   // a real 159 MB debug folder must be accepted, not blocked
   h.$get("#path1").files = [mkFile("DEBUG 3 MONTHS/debug.zip", 159 * 1024 * 1024)];
@@ -541,14 +555,14 @@ async function scenarioS() {
 
   // land on results, as reopening a stored run does
   h.ctx.showResults({ sets: [], workbook: "w.xlsx", dashboard: "d.html", memo: null });
-  check("results visible", !h.$get("#card-res").classList.contains("hide"));
+  check("detail visible", !h.$get("#screen-detail").classList.contains("hide"));
 
   h.$get("#nav-new")._fire("click");
 
-  // without the reset the old results sit under a fresh folder picker
-  check("results cleared for the new run", h.$get("#card-res").classList.contains("hide"));
-  check("chat cleared", h.$get("#card-chat").classList.contains("hide"));
-  check("folder picker shown again", !h.$get("#card-paths").classList.contains("hide"));
+  // without the reset the old run's detail stays reachable behind a fresh picker
+  check("the detail screen is left for the new run", h.$get("#screen-detail").classList.contains("hide"));
+  check("the conversation is closed", h.$get("#chat-drawer").classList.contains("hide"));
+  check("folder picker shown again", !h.$get("#step-folders").classList.contains("hide"));
   check("back to step 1", /Choose your analysis folders/.test(h.$get("#step-title").textContent));
 }
 
@@ -639,8 +653,231 @@ async function scenarioN() {
     `note='${h.$get("#model-note").textContent}'`);
 }
 
+/* ---------------- T: the stage tracker ---------------- */
+async function scenarioT() {
+  console.log("T) the stage list, progress bar and elapsed clock follow the engine");
+
+  const stagesMid = [
+    { key: "discover", name: "Read the analysis folders", detail: "Find the files", status: "done", seconds: 0.4 },
+    { key: "K:load", name: "L - load inputs", detail: "Read the CSVs", status: "done", seconds: 2.5 },
+    { key: "K:check1", name: "L - check 1", detail: "Trace each default", status: "running", seconds: null },
+    { key: "K:export", name: "L - write CSVs", detail: "Export the detail", status: "pending", seconds: null },
+  ];
+  const stagesEnd = stagesMid.map(s =>
+    s.status === "running" ? { ...s, status: "done", seconds: 1.1 }
+      : s.status === "pending" ? { ...s, status: "warn", seconds: 95 } : s);
+
+  let jobCalls = 0;
+  const h = boot((url) => {
+    if (url === "/api/run") return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" }));
+    if (url.startsWith("/api/job/")) {
+      jobCalls++;
+      return Promise.resolve(jsonRes(200, jobCalls <= 1
+        ? { id: "RID1", status: "running", log: [], stages: stagesMid, elapsed_seconds: 71 }
+        : { id: "RID1", status: "done", log: [], result: { sets: [], workbook: "w.xlsx", dashboard: "d.html" },
+            stages: stagesEnd, elapsed_seconds: 99.4 }));
+    }
+    return Promise.resolve(jsonRes(200, {}));
+  });
+
+  h.ctx.beginRun();
+  await tick(); await tick();
+  h.timers.armed();
+  await tick(); await tick();
+
+  const mid = h.$get("#stages").innerHTML;
+  check("every stage is listed", (mid.match(/class="stage /g) || []).length === 4,
+    `rows=${(mid.match(/class="stage /g) || []).length}`);
+  check("the running stage spins", /class="stage running"[\s\S]*progress_activity/.test(mid));
+  check("finished stages are ticked", /class="stage done"[\s\S]*check_circle/.test(mid));
+  check("a pending stage is not ticked", /class="stage pending"[\s\S]*radio_button_unchecked/.test(mid));
+  check("durations are shown", /2\.5s/.test(mid), `html=${mid.slice(0, 120)}`);
+
+  // two of four settled
+  check("the bar reflects progress", h.$get("#run-bar").style.width === "50%",
+    `width='${h.$get("#run-bar").style.width}'`);
+  check("the counter names the running stage",
+    /stage 3 of 4/.test(h.$get("#run-meta").textContent), `meta='${h.$get("#run-meta").textContent}'`);
+  check("the elapsed clock is m:ss",
+    /Elapsed 1:11/.test(h.$get("#run-meta").textContent), `meta='${h.$get("#run-meta").textContent}'`);
+  check("the headline names the current stage",
+    /check 1/.test(h.$get("#run-headline").textContent), `hl='${h.$get("#run-headline").textContent}'`);
+
+  // the log is secondary, so it stays closed until asked for
+  check("the log starts closed", h.$get("#card-log").classList.contains("hide"));
+  h.$get("#btn-log")._fire("click");
+  check("the log opens on request", h.$get("#card-log").classList.contains("hide") === false);
+  check("the toggle relabels", /Hide raw log/.test(h.$get("#btn-log-tx").textContent));
+  h.$get("#btn-log")._fire("click");
+  check("the log closes again", h.$get("#card-log").classList.contains("hide"));
+
+  h.timers.armed();
+  await tick(); await tick();
+
+  const end = h.$get("#stages").innerHTML;
+  check("a warned stage is flagged", /class="stage warn"[\s\S]*warning/.test(end));
+  check("long stages read as m ss", /1m 35s/.test(end), "expected 95s as 1m 35s");
+  check("the bar completes", h.$get("#run-bar").style.width === "100%",
+    `width='${h.$get("#run-bar").style.width}'`);
+  check("the headline reports completion",
+    /complete/i.test(h.$get("#run-headline").textContent), `hl='${h.$get("#run-headline").textContent}'`);
+  check("the elapsed clock stops at the finish",
+    /Elapsed 1:39/.test(h.$get("#run-meta").textContent), `meta='${h.$get("#run-meta").textContent}'`);
+}
+
+/* ---------------- U: the run detail's four tabs ---------------- */
+const DETAIL_RESULT = {
+  sets: [{
+    key: "JUN2026", label: "3. DEBUG FILE 30 JUNE 2026 3 MONTHS",
+    window: "01 Dec 2025 to 30 Jun 2026", scored: 733828,
+    defaults: 15813, exposure_fmt: "R 40,101,222.00",
+    traced: 15440, trace_rate: 97.6, traced_writeoff: 15100, traced_ifrs9: 340,
+    untraced: 373, untraced_fmt: "R 855,159.21",
+    wo_total: 4, wo_in_window: 4, wo_in_window_fmt: "R 1.50", wo_post_window: 0,
+    ifrs9_overlap: 12, mig_validation: "PASS", mig_max_diff: 0,
+    files: ["JUN2026_untraced_defaults.csv"],
+  }],
+  workbook: "reconciliation.xlsx", dashboard: "reconciliation_dashboard.html",
+  memo: "analysis_memo.docx", elapsed_seconds: 41.2,
+  stages: [
+    { key: "discover", name: "Read the analysis folders", detail: "Find the files", status: "done", seconds: 0.4 },
+    { key: "JUN2026:check1", name: "check 1", detail: "Trace defaults", status: "done", seconds: 12.1 },
+  ],
+  outputs: [
+    { name: "analysis_memo.docx", bytes: 24576 },
+    { name: "reconciliation.xlsx", bytes: 1572864 },
+    { name: "reconciliation_dashboard.html", bytes: 409600 },
+    { name: "JUN2026_untraced_defaults.csv", bytes: 900 },
+  ],
+};
+
+async function scenarioU() {
+  console.log("U) the run detail renders its four tabs from the stored result");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  // discovery is what sets the run id; the detail titles itself from it
+  h.ctx.showInventory({ run_id: "3f2a9c41-88bd-4e0e-9a11-7c5d2e6f0a12",
+    inventory: { root: "r", sets: [] }, problems: [] });
+  h.ctx.showResults(DETAIL_RESULT, [{ t: "10:00:01", msg: "CHECK 1: 15,440 traced", kind: "ok" }]);
+
+  check("the detail screen opens", !h.$get("#screen-detail").classList.contains("hide"));
+  check("the title is the run reference", /^[0-9A-F]+$/i.test(h.$get("#detail-title").textContent),
+    `title='${h.$get("#detail-title").textContent}'`);
+  check("the meta names the set and duration",
+    /30 JUNE 2026/.test(h.$get("#detail-meta").textContent) &&
+    /1 set/.test(h.$get("#detail-meta").textContent) &&
+    /41/.test(h.$get("#detail-meta").textContent), `meta='${h.$get("#detail-meta").textContent}'`);
+
+  // summary
+  const sum = h.$get("#tab-summary").innerHTML;
+  check("the set header carries the window", /Scoring window 01 Dec 2025/.test(sum));
+  check("the four figures are shown",
+    (sum.match(/class="ktile"/g) || []).length === 4, `tiles=${(sum.match(/class="ktile"/g) || []).length}`);
+  check("untraced is flagged red", /class="v bad">373</.test(sum));
+  check("in-window write-offs are flagged amber", /class="v warn">4</.test(sum));
+  check("both checks get their own card", /Check 1 — trace every default/.test(sum) &&
+    /Check 2 — the reverse trace/.test(sum));
+  check("the rag pills read from the figures", /15,440 traced · 97.6%/.test(sum) &&
+    /373 untraced · R 855,159.21/.test(sum));
+  check("validation reports the pass", /verified/.test(sum) && /<b>PASS<\/b>/.test(sum) &&
+    /max cell difference 0/.test(sum));
+
+  // stages
+  h.$get("#tab-btn-stages")._fire("click");
+  check("the stages tab shows", !h.$get("#tab-stages").classList.contains("hide"));
+  check("the summary tab hides", h.$get("#tab-summary").classList.contains("hide"));
+  check("every stage is listed", (h.$get("#detail-stages").innerHTML.match(/class="stage /g) || []).length === 2);
+  check("the stage count totals up", /2 of 2 complete/.test(h.$get("#detail-stage-count").textContent),
+    `count='${h.$get("#detail-stage-count").textContent}'`);
+  check("the stored log is available", /CHECK 1/.test(h.$get("#detail-log").innerHTML));
+  check("the log starts closed", h.$get("#detail-log").classList.contains("hide"));
+  h.$get("#btn-detail-log")._fire("click");
+  check("the log opens", !h.$get("#detail-log").classList.contains("hide"));
+
+  // dashboard
+  h.$get("#tab-btn-dashboard")._fire("click");
+  check("the dashboard is embedded", /reconciliation_dashboard\.html/.test(h.$get("#res-frame").src),
+    `src='${h.$get("#res-frame").src}'`);
+  check("the open-in-a-tab link matches", /reconciliation_dashboard\.html/.test(h.$get("#res-open").href));
+
+  // files
+  h.$get("#tab-btn-files")._fire("click");
+  const files = h.$get("#detail-files").innerHTML;
+  check("every output is listed", (files.match(/class="frow"/g) || []).length === 4,
+    `rows=${(files.match(/class="frow"/g) || []).length}`);
+  check("sizes are human readable", /1\.5 MB/.test(files) && /24 KB/.test(files),
+    "expected 1572864 as 1.5 MB and 24576 as 24 KB");
+  check("the workbook is described", /Workbook — every set/.test(files));
+  check("the untraced CSV is called out", /could not be traced/.test(files));
+  check("each row offers a download", (files.match(/>Download</g) || []).length === 4);
+
+  // chat
+  check("the conversation starts closed", h.$get("#chat-drawer").classList.contains("hide"));
+  h.$get("#btn-chat-open")._fire("click");
+  check("Ask about this run opens the drawer", !h.$get("#chat-drawer").classList.contains("hide"));
+  check("the drawer names the run", /[0-9A-F]/i.test(h.$get("#chat-run").textContent));
+  h.$get("#btn-chat-close")._fire("click");
+  check("the drawer closes", h.$get("#chat-drawer").classList.contains("hide"));
+}
+
+/* ---------------- V: a set whose IFRS9 file never matched ---------------- */
+async function scenarioV() {
+  console.log("V) a set with no IFRS9 overlap and a failed validation says so");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const broken = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  broken.sets[0].ifrs9_overlap = 0;
+  broken.sets[0].mig_validation = "FAIL";
+  broken.sets[0].mig_max_diff = 17;
+  h.ctx.showResults(broken, []);
+
+  const sum = h.$get("#tab-summary").innerHTML;
+  check("the IFRS9 mismatch is explained", /IFRS9 could not be matched/.test(sum));
+  check("the failed validation is flagged", /<b>FAIL<\/b>/.test(sum) && /error<\/span>/.test(sum),
+    "expected a FAIL with the error icon");
+  check("the difference is quoted", /max cell difference 17/.test(sum));
+
+  // and a set that could not be validated at all
+  const na = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  na.sets[0].mig_validation = "N/A";
+  na.sets[0].mig_max_diff = null;
+  h.ctx.showResults(na, []);
+  check("an unvalidatable set explains why",
+    /no <code>CohortNlambda<\/code> to compare/.test(h.$get("#tab-summary").innerHTML));
+}
+
+/* ---------------- W: a run stored before sizes were recorded ---------------- */
+async function scenarioW() {
+  console.log("W) an older stored run with no outputs list still lists its files");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const old = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  delete old.outputs;
+  delete old.stages;
+  delete old.elapsed_seconds;
+  h.ctx.showResults(old, []);
+
+  const files = h.$get("#detail-files").innerHTML;
+  check("the files fall back to the names on the result",
+    (files.match(/class="frow"/g) || []).length === 4,
+    `rows=${(files.match(/class="frow"/g) || []).length}`);
+  check("no size is invented", !/undefined|NaN/.test(files));
+  check("the summary still renders", /Scoring window/.test(h.$get("#tab-summary").innerHTML));
+  check("the stage count is simply empty", h.$get("#detail-stage-count").textContent === "",
+    `count='${h.$get("#detail-stage-count").textContent}'`);
+  check("the meta omits a duration it does not have",
+    !/ran in/.test(h.$get("#detail-meta").textContent), `meta='${h.$get("#detail-meta").textContent}'`);
+}
+
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
-                 scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS]) { await s(); console.log(""); }
+                 scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
+                 scenarioU, scenarioV, scenarioW]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

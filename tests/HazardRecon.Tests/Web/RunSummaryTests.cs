@@ -24,6 +24,21 @@ public class RunSummaryTests
     }
 
     [Fact]
+    public void TestExceptionsSumInWindowWriteOffsAcrossSets()
+    {
+        // "exceptions" in this product means write-offs inside the scoring window
+        // that never reached default - what the run detail calls the priority ones
+        RunSummary s = RunSummary.From(Json("""
+        {"sets":[
+          {"key":"A","wo_in_window":9,"wo_post_window":400},
+          {"key":"B","wo_in_window":32,"wo_post_window":150}
+        ]}
+        """));
+
+        Assert.Equal(41, s.Exceptions);
+    }
+
+    [Fact]
     public void TestTraceRateIsAveragedNotSummed()
     {
         // summing would show 195% traced, which is the obvious way to get this wrong
@@ -62,6 +77,7 @@ public class RunSummaryTests
         Assert.Equal(2, s.Sets);
         Assert.Equal(5, s.Untraced);
         Assert.Equal(0, s.TraceRate);
+        Assert.Equal(0, s.Exceptions);
     }
 
     [Fact]

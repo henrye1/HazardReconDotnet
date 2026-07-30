@@ -119,7 +119,7 @@
 
     <!-- ============ SCREEN: new run wizard ============ -->
     <section id="screen-wizard" class="hide">
-      <div class="pagehead">
+      <div class="pagehead mid">
         <div class="grow">
           <p class="eyebrow">New reconciliation</p>
           <h1 id="step-title">Choose your analysis folders</h1>
@@ -127,131 +127,259 @@
         <button class="btn ghost" id="btn-cancel">Cancel</button>
       </div>
 
-      <div class="rail" id="rail">
-        <div class="st on" data-step="0">
-          <div class="n">1</div>
-          <div class="tx"><b>Folders</b><span>Pick up to four</span></div>
-          <div class="line"></div>
-        </div>
-        <div class="st" data-step="1">
-          <div class="n">2</div>
-          <div class="tx"><b>Confirm</b><span>What was found</span></div>
-          <div class="line"></div>
-        </div>
-        <div class="st" data-step="2">
-          <div class="n">3</div>
-          <div class="tx"><b>Run</b><span>Checks and engine</span></div>
-          <div class="line"></div>
-        </div>
-        <div class="st" data-step="3">
-          <div class="n">4</div>
-          <div class="tx"><b>Results</b><span>Review and ask</span></div>
-          <div class="line"></div>
+      <div class="rail">
+        <div class="railinner" id="rail">
+          <div class="st on" data-step="0">
+            <div class="n">1</div>
+            <div class="tx"><b>Folders</b><span>Pick up to four</span></div>
+            <div class="line"></div>
+          </div>
+          <div class="st" data-step="1">
+            <div class="n">2</div>
+            <div class="tx"><b>Confirm</b><span>What was found</span></div>
+            <div class="line"></div>
+          </div>
+          <div class="st" data-step="2">
+            <div class="n">3</div>
+            <div class="tx"><b>Run</b><span>Checks and engine</span></div>
+            <div class="line"></div>
+          </div>
+          <div class="st" data-step="3">
+            <div class="n">4</div>
+            <div class="tx"><b>Results</b><span>Review and ask</span></div>
+            <div class="line"></div>
+          </div>
         </div>
       </div>
 
-      <div class="wrap">
+      <div class="wrap narrow">
 
         <!-- step 1 : folders -->
-        <div class="card" id="card-paths">
-          <div class="cardhead"><span>Analysis folders</span></div>
-          <div class="cardbody">
-            <p class="hint" style="margin:0 0 14px">Choose each analysis folder (up to 4).
-              Each folder holds everything for its run: the write-off CSV, the IFRS9 CSV,
-              <code>debug.zip</code> (or the extracted files) and <code>scenario.json</code>.
-              The folder's contents are uploaded, so a large folder takes a moment.</p>
+        <div class="cols2" id="step-folders">
+          <div class="card" id="card-paths">
+            <div class="cardhead"><span>Analysis folders</span></div>
+            <div class="cardbody">
+              <p class="hint" style="margin:0 0 15px">Choose up to four analysis folders. Each folder holds
+                everything for its set &mdash; the write-off CSV, the IFRS9 CSV,
+                <code>debug.zip</code> (or the extracted files) and <code>scenario.json</code>.
+                Contents are uploaded, so a large folder takes a moment.</p>
 
-            <div id="paths"></div>
-            <button class="btn" id="btn-add-path">
-              <span class="ms-icon" style="font-size:20px">add</span>Add another folder
-            </button>
-
-            <div class="actions">
-              <button class="btn primary big" id="btn-check" disabled>
-                Check folders<span class="ms-icon" style="font-size:20px">arrow_forward</span>
+              <div id="paths"></div>
+              <button class="addfolder" id="btn-add-path">
+                <span class="ms-icon" style="font-size:20px">add</span>Add another folder
               </button>
+
+              <div class="actions right">
+                <span class="hint" style="margin:0" id="folder-count"></span>
+                <button class="btn primary big" id="btn-check" disabled>
+                  <span id="btn-check-tx">Check folders</span>
+                  <span class="ms-icon" style="font-size:20px">arrow_forward</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardhead"><span>What a folder must contain</span></div>
+            <div class="cardbody reqs">
+              <div class="req">
+                <span class="ms-icon">description</span>
+                <div><b>The write-off CSV</b>
+                  <span>Any CSV in the folder. Files named <code>writeoff_not_default</code> and anything
+                    under an <code>output</code> folder are ignored.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">description</span>
+                <div><b>The IFRS9 CSV</b>
+                  <span>A CSV with <code>IFRS9</code> in its name, holding the account numbers and
+                    amounts outstanding.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">folder_zip</span>
+                <div><b><code>debug.zip</code></b>
+                  <span>Holds <code>lgd_defaults.csv</code> and <code>pd_scored.csv</code>. Files you have
+                    already extracted work just as well.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">settings</span>
+                <div><b><code>scenario.json</code></b>
+                  <span>The engine's own parameters, including the scoring window.
+                    <code>debug.json</code> also works.</span></div>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- step 2 : confirm -->
-        <div class="card hide" id="card-inv">
-          <div class="cardhead"><span>Inventory</span></div>
-          <div class="cardbody">
-            <p class="muted" id="inv-root"></p>
-            <div id="inv-problems"></div>
-            <div style="overflow-x:auto"><table class="grid" id="inv-table"></table></div>
-            <div class="actions">
+        <div class="stepgrid hide" id="step-confirm">
+          <div class="card" id="card-inv">
+            <div class="cardhead">
+              <span>Inventory</span>
+              <span class="okflag hide" id="inv-ok">
+                <span class="ms-icon" style="font-size:18px">check_circle</span>No problems found
+              </span>
+            </div>
+            <div class="cardbody">
+              <p class="muted path" id="inv-root"></p>
+              <div id="inv-problems"></div>
+              <div style="overflow-x:auto"><table class="grid tight" id="inv-table"></table></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardhead"><span>Run options</span></div>
+            <div class="cardbody runopts">
               <div class="modelrow">
                 <label for="model">AI analysis model</label>
                 <select id="model"></select>
-                <span class="hint" id="model-note" style="margin:0"></span>
               </div>
-              <button class="btn primary big" id="btn-run">Run reconciliation</button>
+              <p class="hint" id="model-note" style="margin:0 0 6px;max-width:360px"></p>
+              <div class="actions right" style="margin-top:0">
+                <button class="btn ghost" id="btn-back-folders">
+                  <span class="ms-icon" style="font-size:20px">arrow_back</span>Back
+                </button>
+                <button class="btn primary big" id="btn-run">
+                  <span class="ms-icon" style="font-size:20px">play_arrow</span>Run reconciliation
+                </button>
+              </div>
             </div>
-            <p class="hint">Two checks per set, plus migrations and engine results.</p>
           </div>
+
+          <p class="hint" style="margin:0">Two checks per set, plus migrations and engine results.</p>
         </div>
 
         <!-- step 3 : progress -->
-        <div class="card hide" id="card-run">
-          <div class="cardhead">
-            <span>Progress</span>
-            <span class="badge" id="run-badge">running</span>
-          </div>
-          <div class="cardbody">
-            <div class="logbox" id="log"></div>
-          </div>
-        </div>
-
-        <!-- step 4 : results -->
-        <div class="card hide" id="card-res">
-          <div class="cardhead">
-            <span>Results</span>
-            <button class="btn clear" id="btn-rerun"
-                    title="Run the reconciliation again on the same folders">&#8635; Run again</button>
-          </div>
-          <div class="cardbody">
-            <div id="res-sets"></div>
-            <div class="dlrow" id="res-downloads"></div>
-            <h3>Dashboard</h3>
-            <p class="hint" style="margin-top:0">The full finance dashboard, with the interactive migration
-              matrix and engine results.
-              <a id="res-open" href="#" target="_blank" rel="noopener">Open in a new tab &nearr;</a></p>
-            <iframe id="res-frame" title="Reconciliation dashboard"></iframe>
-          </div>
-        </div>
-
-        <!-- step 4 : chat -->
-        <div class="card hide" id="card-chat">
-          <div class="cardhead"><span>Ask about this run</span></div>
-          <div class="cardbody">
-            <div class="chatlog" id="chat-log"></div>
-            <div class="chatrow">
-              <textarea id="chat-input" class="chatbox" rows="2"
-                        placeholder="e.g. why is the 5&rarr;5 cell bigger than the default count?"></textarea>
-              <button class="btn primary" id="btn-chat">Send</button>
+        <div class="stepgrid hide" id="step-run">
+          <div class="card">
+            <div class="runhead">
+              <span class="chip running" id="run-badge">Running</span>
+              <span class="rhl" id="run-headline">Starting the run&hellip;</span>
+              <span class="rmeta" id="run-meta"></span>
             </div>
-            <p class="hint">Each question sends masked query results to the selected model and costs a few cents.</p>
+            <div class="progress"><i id="run-bar" style="width:0%"></i></div>
+            <div class="stages" id="stages"></div>
+            <div class="runfoot">
+              <button class="linkbtn" id="btn-log">
+                <span class="ms-icon" style="font-size:18px" id="btn-log-ic">expand_more</span><span id="btn-log-tx">Show raw log</span>
+              </button>
+              <div class="actions right" style="margin-top:0">
+                <button class="btn ghost" id="btn-back-runs">Back to my runs</button>
+                <button class="btn primary big" id="btn-view-results" disabled>
+                  View results<span class="ms-icon" style="font-size:20px">arrow_forward</span>
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="card">
-          <div class="cardhead"><span>What the checks mean</span></div>
-          <div class="cardbody">
-            <p class="hint" style="margin:0"><b>Check 1</b> &mdash; every default (Bucket&nbsp;0) should appear in
-              the write-off file or the IFRS9 file; those in neither are <b>untraced</b>.</p>
-            <p class="hint"><b>Check 2</b> &mdash; the reverse: scored accounts written off but
-              <b>never flagged as a default</b>, with the ones written off inside the scoring window flagged as
-              the priority exceptions.</p>
+          <div class="card hide" id="card-log">
+            <div class="cardhead"><span>Raw engine log</span></div>
+            <div class="logbox" id="log"></div>
           </div>
         </div>
 
       </div>
     </section>
 
+    <!-- ============ SCREEN: run detail ============ -->
+    <section id="screen-detail" class="hide">
+      <div class="detailhead">
+        <button class="linkbtn" id="btn-detail-back">
+          <span class="ms-icon" style="font-size:18px">arrow_back</span>Back to my runs
+        </button>
+        <div class="dhrow">
+          <div class="grow">
+            <div class="dhtitle">
+              <h1 id="detail-title">Run</h1>
+              <span class="chip done" id="detail-status">Completed</span>
+            </div>
+            <p class="dhmeta" id="detail-meta"></p>
+          </div>
+          <div class="dhacts">
+            <button class="btn" id="btn-rerun"
+                    title="Run the reconciliation again on the same folders">
+              <span class="ms-icon" style="font-size:20px">refresh</span>Run again
+            </button>
+            <button class="btn indigo" id="btn-chat-open">
+              <span class="ms-icon" style="font-size:20px">forum</span>Ask about this run
+            </button>
+          </div>
+        </div>
+        <div class="tabs">
+          <button class="tab on" id="tab-btn-summary">Summary</button>
+          <button class="tab" id="tab-btn-stages">Stages</button>
+          <button class="tab" id="tab-btn-dashboard">Dashboard</button>
+          <button class="tab" id="tab-btn-files">Files</button>
+        </div>
+      </div>
+
+      <div class="wrap">
+        <div class="stepgrid" id="tab-summary"></div>
+
+        <div class="stepgrid hide" id="tab-stages">
+          <div class="card">
+            <div class="cardhead">
+              <span>Engine stages</span>
+              <span class="sub" id="detail-stage-count"></span>
+            </div>
+            <div class="stages" id="detail-stages"></div>
+          </div>
+          <div class="card">
+            <button class="cardhead toggle" id="btn-detail-log">
+              <span class="ms-icon" style="font-size:20px" id="detail-log-ic">expand_more</span>
+              <span id="detail-log-tx">Show raw engine log</span>
+            </button>
+            <div class="logbox hide" id="detail-log"></div>
+          </div>
+        </div>
+
+        <div class="hide" id="tab-dashboard">
+          <div class="card">
+            <div class="cardhead">
+              <span>Reconciliation dashboard</span>
+              <a id="res-open" href="#" target="_blank" rel="noopener" class="headlink">Open in a new tab<span
+                 class="ms-icon" style="font-size:16px">open_in_new</span></a>
+            </div>
+            <div class="cardbody" style="display:grid;gap:12px">
+              <p class="hint" style="margin:0">The full finance dashboard, with the interactive migration
+                matrix and engine results.</p>
+              <iframe id="res-frame" title="Reconciliation dashboard"></iframe>
+            </div>
+          </div>
+        </div>
+
+        <div class="hide" id="tab-files">
+          <div class="card">
+            <div class="cardhead"><span>Output files</span></div>
+            <div id="detail-files"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 </div>
+
+<!-- ============ chat drawer, over whichever screen is showing ============ -->
+<aside class="drawer hide" id="chat-drawer">
+  <div class="drawerhead">
+    <span class="ms-icon" style="font-size:22px;color:var(--cl-primary-color)">forum</span>
+    <div class="grow">
+      <span class="dt">Ask about this run</span>
+      <span class="ds" id="chat-run"></span>
+    </div>
+    <button class="x" id="btn-chat-close" title="Close">
+      <span class="ms-icon" style="font-size:20px">close</span>
+    </button>
+  </div>
+  <div class="chatlog" id="chat-log"></div>
+  <div class="drawerfoot">
+    <textarea id="chat-input" class="chatbox" rows="3"
+              placeholder="e.g. why is the 5&rarr;5 cell bigger than the default count?"></textarea>
+    <button class="btn primary block" id="btn-chat">Send<span class="ms-icon"
+            style="font-size:20px">send</span></button>
+    <span class="note">Each question sends masked query results to the selected model and costs a few cents.</span>
+  </div>
+</aside>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="app.js"></script>

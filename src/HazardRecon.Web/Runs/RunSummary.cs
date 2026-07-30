@@ -8,9 +8,9 @@ namespace HazardRecon.Web.Runs;
 /// Read from the result already held on the row rather than recomputed or stored
 /// twice, so the list cannot drift from what the run actually produced.
 /// </summary>
-public record RunSummary(int Sets, long Untraced, double TraceRate)
+public record RunSummary(int Sets, long Untraced, double TraceRate, long Exceptions)
 {
-    public static readonly RunSummary Empty = new(0, 0, 0);
+    public static readonly RunSummary Empty = new(0, 0, 0, 0);
 
     public static RunSummary From(JsonElement? result)
     {
@@ -21,6 +21,7 @@ public record RunSummary(int Sets, long Untraced, double TraceRate)
         int count = 0;
         long untraced = 0;
         double rateTotal = 0;
+        long exceptions = 0;
 
         foreach (JsonElement set in sets.EnumerateArray())
         {
@@ -37,10 +38,17 @@ public record RunSummary(int Sets, long Untraced, double TraceRate)
             {
                 rateTotal += rate;
             }
+
+            // Check 2's in-window write-offs; the ones the run detail calls priority
+            if (set.TryGetProperty("wo_in_window", out JsonElement w) &&
+                w.ValueKind == JsonValueKind.Number && w.TryGetInt64(out long inWindow))
+            {
+                exceptions += inWindow;
+            }
         }
 
         if (count == 0) return Empty;
 
-        return new RunSummary(count, untraced, Math.Round(rateTotal / count, 1));
+        return new RunSummary(count, untraced, Math.Round(rateTotal / count, 1), exceptions);
     }
 }

@@ -159,7 +159,7 @@ public class ReconciliationEngine
         return (records, summary);
     }
 
-    public ReconciliationRunResult Run(object root, string outdir = "output", Action<string, string>? logger = null, bool analyze = false, AiAnalysisService? analyst = null)
+    public ReconciliationRunResult Run(object root, string outdir = "output", Action<string, string>? logger = null, bool analyze = false, AiAnalysisService? analyst = null, StageReporter? stages = null)
     {
         Directory.CreateDirectory(outdir);
         Action<string, string> log = (msg, kind) =>
@@ -172,16 +172,39 @@ public class ReconciliationEngine
             }
         };
 
+        // callers that do not care about progress get a reporter wired to nothing,
+        // so the stage calls below need no null checks
+        stages ??= new StageReporter();
+
         log("Hazard-rate reconciliation starting", "head");
 
-        Inventory inv = root is IEnumerable<string> folderList
-            ? _discoverer.DiscoverFromFolders(folderList.ToList(), log)
-            : _discoverer.DiscoverInputs(root.ToString()!, log);
+        stages.Plan((StageKeys.Discover, "Read the analysis folders", "Find the write-off, defaults, scored and IFRS9 files in each folder"));
+        stages.Begin(StageKeys.Discover);
+
+        Inventory inv;
+        try
+        {
+            inv = root is IEnumerable<string> folderList
+                ? _discoverer.DiscoverFromFolders(folderList.ToList(), log)
+                : _discoverer.DiscoverInputs(root.ToString()!, log);
+        }
+        catch
+        {
+            stages.End(StageKeys.Discover, StageStatus.Error);
+            throw;
+        }
 
         if (inv.Sets.Count == 0)
         {
+            stages.End(StageKeys.Discover, StageStatus.Error);
             throw new InvalidOperationException("No analysis sets found. Each folder needs debug.zip (or an extracted lgd_defaults.csv).");
         }
+
+        stages.End(StageKeys.Discover);
+
+        // the per-set steps are only knowable now, so the plan arrives in two waves
+        foreach (var (planKey, planSet) in inv.Sets) stages.Plan(StageKeys.ForSet(planKey, planSet.Label));
+        stages.Plan(StageKeys.Tail(analyze));
 
         Dictionary<string, (List<WriteOffAggRecord> Agg, HashSet<string> Accts)> woCache = new();
         (List<WriteOffAggRecord> Agg, HashSet<string> Accts) GetWoFor(InventorySet setInfo)
@@ -203,12 +226,17 @@ public class ReconciliationEngine
         {
             log($"===== {key}  ({setInfo.Label}) =====", "head");
 
-            var (woAgg, woAccts) = GetWoFor(setInfo);
-            EngineScenario engine = _dataLoaders.LoadScenario(setInfo.Scenario, setInfo.DebugJson, log);
-            List<DefaultAccountRecord> defaults = _dataLoaders.LoadDefaults(setInfo.LgdDefaults, log);
-            SourceAccountsResult ifrs9Res = _dataLoaders.LoadSourceAccounts(setInfo.Ifrs9, "LoanAccountNumber", $"{key} IFRS9", "AmountOutstanding", log);
+            var (woAgg, woAccts, engine, defaults, ifrs9Res) = stages.Track(StageKeys.Load(key), () =>
+            {
+                var (agg, accts) = GetWoFor(setInfo);
+                return (agg, accts,
+                    _dataLoaders.LoadScenario(setInfo.Scenario, setInfo.DebugJson, log),
+                    _dataLoaders.LoadDefaults(setInfo.LgdDefaults, log),
+                    _dataLoaders.LoadSourceAccounts(setInfo.Ifrs9, "LoanAccountNumber", $"{key} IFRS9", "AmountOutstanding", log));
+            });
 
-            var (full, untraced, summary) = ReconcileDefaults(defaults, woAccts, ifrs9Res.AccountNumbers, woAgg, ifrs9Res.AmountsPerAccount, log);
+            var (full, untraced, summary) = stages.Track(StageKeys.Check1(key), () =>
+                ReconcileDefaults(defaults, woAccts, ifrs9Res.AccountNumbers, woAgg, ifrs9Res.AmountsPerAccount, log));
 
             summary.Ifrs9KeyOverlap = defaults.Select(d => d.AccountNormalized).Intersect(ifrs9Res.AccountNumbers).Count();
             summary.Ifrs9Rows = ifrs9Res.TotalRows;
@@ -217,12 +245,16 @@ public class ReconciliationEngine
             MigrationMatrixResult mig;
             if (!string.IsNullOrEmpty(setInfo.PdScored))
             {
-                mig = _matrixBuilder.BuildMigrationMatrix(setInfo.PdScored, woAccts, log);
+                mig = stages.Track(StageKeys.Migrations(key), () =>
+                    _matrixBuilder.BuildMigrationMatrix(setInfo.PdScored, woAccts, log));
             }
             else
             {
                 log("pd_scored.csv missing - migrations and check 2 limited", "warn");
                 mig = new MigrationMatrixResult();
+                // nothing to build, and check 2 will be partial - say so rather than
+                // leaving a row that looks like it succeeded
+                stages.End(StageKeys.Migrations(key), StageStatus.Warn);
             }
 
             HashSet<string> scored = mig.ScoredAccts;
@@ -230,7 +262,8 @@ public class ReconciliationEngine
             DateTime? pdMin = engine.Params.TryGetValue("PdMinDate", out object? pMinObj) && DateTime.TryParse(pMinObj?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime pMin) ? pMin : null;
             DateTime? pdMax = engine.Params.TryGetValue("PdMaxDate", out object? pMaxObj) && DateTime.TryParse(pMaxObj?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime pMax) ? pMax : null;
 
-            var (woNd, woSum) = ReconcileWriteoffNotDefault(scored, woAgg, defaults.Select(d => d.AccountNormalized).ToHashSet(), (pdMin, pdMax), mig.LastRating, log);
+            var (woNd, woSum) = stages.Track(StageKeys.Check2(key), () =>
+                ReconcileWriteoffNotDefault(scored, woAgg, defaults.Select(d => d.AccountNormalized).ToHashSet(), (pdMin, pdMax), mig.LastRating, log));
 
             // Merge Check 2 summary properties into main summary
             summary.WoNotDefaultTotal = woSum.WoNotDefaultTotal;
@@ -241,7 +274,8 @@ public class ReconciliationEngine
             summary.WoPostWindow = woSum.WoPostWindow;
             summary.ScoredInWriteOff = woSum.ScoredInWriteOff;
 
-            MigrationValidationResult val = _matrixBuilder.ReconcileMigration(mig, engine.CohortNlambda);
+            MigrationValidationResult val = stages.Track(StageKeys.Validate(key), () =>
+                _matrixBuilder.ReconcileMigration(mig, engine.CohortNlambda));
             summary.MigValidation = val.Status;
             summary.MigValidationMaxDiff = val.MaxAbsDiff;
 
@@ -249,6 +283,14 @@ public class ReconciliationEngine
             {
                 log($"validation: rebuilt migration matrix vs debug.json CohortNlambda = {val.Status} (max cell diff {val.MaxAbsDiff})", val.Status == "PASS" ? "ok" : "warn");
             }
+
+            // a failed comparison is a finding, not a crash - the row says so
+            stages.End(StageKeys.Validate(key), val.Status switch
+            {
+                "PASS" => StageStatus.Done,
+                "N/A" => StageStatus.Skipped,
+                _ => StageStatus.Warn,
+            });
 
             int b4Count = 0;
             double b4Val = 0.0;
@@ -281,7 +323,8 @@ public class ReconciliationEngine
             summary.UntracedFullyRecovered = fully.Count;
             summary.UntracedFullyRecoveredAmount = fully.Sum(f => f.DefaultAmount);
 
-            List<string> files = CsvExporter.ExportSet(outdir, key, untraced, full, woNd, mig);
+            List<string> files = stages.Track(StageKeys.Export(key), () =>
+                CsvExporter.ExportSet(outdir, key, untraced, full, woNd, mig));
             summary.Files = files;
 
             results[key] = new SingleSetResult
@@ -298,7 +341,7 @@ public class ReconciliationEngine
             log($"{key} complete: {summary.UntracedTotal:N0} untraced defaults, {summary.WoInWindow:N0} in-window write-offs never defaulted", "ok");
         }
 
-        string xlsx = WorkbookExporter.ExportWorkbook(outdir, results, log);
+        string xlsx = stages.Track(StageKeys.Workbook, () => WorkbookExporter.ExportWorkbook(outdir, results, log));
 
         string? analysisMd = null;
         if (analyze)
@@ -306,25 +349,34 @@ public class ReconciliationEngine
             if (analyst == null)
             {
                 log("no model selected - skipping AI analysis", "warn");
+                stages.End(StageKeys.Analysis, StageStatus.Skipped);
             }
             else
             {
                 log("Generating AI analysis", "head");
-                var payload = AiAnalysisService.BuildAnalysisPayload(results);
-                analysisMd = analyst.GenerateAnalysis(payload, log);
+                analysisMd = stages.Track(StageKeys.Analysis, () =>
+                {
+                    var payload = AiAnalysisService.BuildAnalysisPayload(results);
+                    return analyst.GenerateAnalysis(payload, log);
+                });
             }
         }
 
-        string html = DashboardRenderer.RenderDashboardAndSave(outdir, results, analysisMd, log);
+        string html = stages.Track(StageKeys.Dashboard, () =>
+            DashboardRenderer.RenderDashboardAndSave(outdir, results, analysisMd, log));
 
         string? memo = null;
         if (!string.IsNullOrEmpty(analysisMd))
         {
-            memo = DocxExporter.WriteMemo(analysisMd, outdir, DateTime.Today.ToString("yyyy-MM-dd"), results.Values.Select(r => r.Summary.Label).ToList());
+            memo = stages.Track(StageKeys.Memo, () =>
+                DocxExporter.WriteMemo(analysisMd, outdir, DateTime.Today.ToString("yyyy-MM-dd"), results.Values.Select(r => r.Summary.Label).ToList()));
             log($"analysis memo written: {memo}", "ok");
         }
 
         log("Reconciliation complete", "head");
+
+        // anything planned but never reached is marked skipped rather than left pending
+        stages.Settle(StageStatus.Done);
 
         return new ReconciliationRunResult
         {

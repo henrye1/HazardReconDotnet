@@ -1,3 +1,5 @@
+using HazardRecon.Core.Models;
+
 namespace HazardRecon.Web;
 
 internal class JobState
@@ -15,6 +17,16 @@ internal class JobState
     public object? Result { get; set; }
     public string? Error { get; set; }
     public string Started { get; set; } = string.Empty;
+
+    /// <summary>How far the run has got. Replaced wholesale on every engine update.</summary>
+    public IReadOnlyList<RunStage> Stages { get; set; } = Array.Empty<RunStage>();
+
+    /// <summary>When the current attempt began, for the elapsed clock on the progress screen.</summary>
+    public DateTimeOffset? StartedAt { get; set; }
+
+    /// <summary>Set when the attempt ends, so the elapsed clock stops instead of climbing forever.</summary>
+    public DateTimeOffset? FinishedAt { get; set; }
+
     public string? ModelId { get; set; }
     public Dictionary<string, object>? AnalysisPayload { get; set; }
 }
