@@ -41,6 +41,16 @@ builder.Services
             $"{SupabaseJwt.Issuer(supabaseOptions)}/.well-known/jwks.json",
             new JwksRetriever(),
             new HttpDocumentRetriever());
+
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = ctx =>
+            {
+                ctx.Request.Cookies.TryGetValue(SupabaseJwt.DownloadCookie, out string? cookie);
+                ctx.Token = SupabaseJwt.TokenForRequest(ctx.Token, cookie);
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();
@@ -337,6 +347,35 @@ app.MapGet("/api/models", async () =>
         return Results.Json(new { error = $"Could not list models - {ex.Message}" }, statusCode: 503);
     }
 }).RequireAuthorization();
+
+// POST /api/session - hands the verified token back as a cookie so the browser
+// can load the dashboard iframe and the artifact links, which cannot carry an
+// Authorization header. Scoped to /runs, so it is never sent to the JSON API.
+app.MapPost("/api/session", (HttpContext ctx) =>
+{
+    string? token = ctx.Request.Headers.Authorization.ToString()
+        .Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+
+    if (string.IsNullOrEmpty(token)) return Results.Unauthorized();
+
+    ctx.Response.Cookies.Append(SupabaseJwt.DownloadCookie, token, new CookieOptions
+    {
+        HttpOnly = true,
+        Secure = ctx.Request.IsHttps,
+        SameSite = SameSiteMode.Strict,
+        Path = "/runs",
+        MaxAge = TimeSpan.FromHours(1)
+    });
+
+    return Results.Ok(new { ok = true });
+}).RequireAuthorization();
+
+// DELETE /api/session - drop the cookie on sign-out
+app.MapDelete("/api/session", (HttpContext ctx) =>
+{
+    ctx.Response.Cookies.Delete(SupabaseJwt.DownloadCookie, new CookieOptions { Path = "/runs" });
+    return Results.Ok(new { ok = true });
+});
 
 // GET /api/config - the browser needs the project URL and the public anon key to
 // start a session. The service-role key is never exposed here.

@@ -49,6 +49,13 @@ function hideGate() {
   $("#auth-msg").textContent = "";
 }
 
+/* The dashboard loads in an iframe and the artifacts are plain links, neither of
+   which can carry an Authorization header. Hand the token to the server once so
+   it can hand back a /runs-scoped cookie the browser will attach by itself. */
+function openDownloadSession() {
+  return api("/api/session", { method: "POST" });
+}
+
 function startSession() {
   return fetch("/api/config")
     .then(readJson)
@@ -59,7 +66,7 @@ function startSession() {
     })
     .then((res) => {
       const session = res && res.data ? res.data.session : null;
-      if (session) { TOKEN = session.access_token; hideGate(); loadModels(); }
+      if (session) { TOKEN = session.access_token; hideGate(); openDownloadSession(); loadModels(); }
       else { showGate(""); }
     });
 }
@@ -84,6 +91,7 @@ $("#btn-signin").addEventListener("click", () => {
     if (error) { $("#auth-msg").textContent = error.message; return; }
     TOKEN = data.session.access_token;
     hideGate();
+    openDownloadSession();
     loadModels();
   });
 });
@@ -99,7 +107,10 @@ $("#btn-signup").addEventListener("click", () => {
 });
 
 $("#btn-signout").addEventListener("click", () => {
-  SB.auth.signOut().then(() => showGate("Signed out."));
+  // drop the download cookie too, or the artifacts stay reachable after sign-out
+  SB.auth.signOut()
+    .then(() => fetch("/api/session", { method: "DELETE" }))
+    .then(() => showGate("Signed out."));
 });
 
 startSession();
