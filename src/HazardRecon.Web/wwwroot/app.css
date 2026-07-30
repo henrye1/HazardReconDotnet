@@ -123,3 +123,24 @@ iframe{width:100%;height:640px;border:1px solid var(--line);border-radius:10px;
 .modelrow select { padding:6px 8px; border:1px solid #cfd8e3; border-radius:6px; font-size:13px; background:#fff; }
 .modelrow select:disabled { background:#f0f2f5; color:#5b6b7f; }
 .modelrow .hint { margin:0; }
+
+/* auth gate - covers the page until a session exists */
+.authgate{position:fixed;inset:0;z-index:50;background:var(--bg);
+     display:grid;place-items:center;padding:22px}
+.authcard{background:var(--card);border:1px solid var(--line);border-radius:12px;
+     padding:26px 28px;width:100%;max-width:380px;
+     box-shadow:0 1px 3px rgba(20,40,70,.05)}
+.authcard h1{margin:0 0 4px;font-size:20px;font-weight:650}
+.authcard label{display:block;font-size:12.5px;color:var(--muted);
+     margin:14px 0 6px}
+.authcard input[type=email],.authcard input[type=password]{width:100%;
+     padding:9px 11px;border:1px solid #cfd8e3;border-radius:7px;
+     font-size:13px;font-family:inherit}
+.authcard input[type=email]:focus,.authcard input[type=password]:focus{
+     outline:2px solid #bcd4ec;border-color:var(--blue)}
+.authmsg{color:var(--muted);font-size:12.5px;margin:14px 0 0;min-height:18px}
+
+/* sign-out sits opposite the title in the dark header */
+header .wrap{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header .wrap > div{flex:1}
+#btn-signout{flex:none}

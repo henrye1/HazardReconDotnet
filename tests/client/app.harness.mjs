@@ -26,7 +26,12 @@ function makeEl(id = "") {
     },
     appendChild(c) { kids.push(c); c.parentNode = el; return c; },
     remove() { const i = kids.indexOf(el); if (i >= 0) kids.splice(i, 1); },
-    addEventListener() {}, scrollIntoView() {}, focus() {},
+    // handlers are recorded, not discarded, so a scenario can fire a real click
+    // - the sign-in path is only reachable through its listener
+    _h: {},
+    addEventListener(type, fn) { (el._h[type] = el._h[type] || []).push(fn); },
+    _fire(type) { (el._h[type] || []).forEach(f => f()); },
+    scrollIntoView() {}, focus() {},
     querySelector(sel) {
       const want = sel.replace(".", "");
       return kids.find(k => (k.className || "").split(" ").includes(want)) || null;
@@ -54,6 +59,26 @@ function newCtx() {
     setInterval: (fn) => { timers.armed = fn; timers.id = timers.nextId++; return timers.id; },
     clearInterval: () => { timers.cleared++; timers.armed = null; },
     fetch: null,
+    // stands in for the supabase-js UMD bundle the page loads from CDN. Set
+    // _session before running app.js to boot as a signed-in user.
+    supabase: {
+      _session: null,
+      _signInError: null,
+      createClient() {
+        const self = this;
+        return {
+          auth: {
+            getSession: () => Promise.resolve({ data: { session: self._session } }),
+            signInWithPassword: ({ email }) =>
+              Promise.resolve(self._signInError
+                ? { data: { session: null }, error: { message: self._signInError } }
+                : { data: { session: { access_token: "tok-" + email } }, error: null }),
+            signUp: () => Promise.resolve({ data: { session: null }, error: null }),
+            signOut: () => { self._session = null; return Promise.resolve({ error: null }); },
+          },
+        };
+      },
+    },
     Number, JSON, String, Date, Object, Array, Math, Promise, encodeURIComponent,
   };
   ctx.globalThis = ctx;
@@ -268,6 +293,90 @@ async function scenarioH() {
     `value='${present.$get("#model").value}'`);
 }
 
-for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH]) { await s(); console.log(""); }
+/* ---------------- I: no session leaves the gate up ---------------- */
+const CFG = { supabaseUrl: "https://x.supabase.co", supabaseAnonKey: "anon" };
+
+// boots app.js without seeding a run, so the auth path is what is under test
+function bootAuth(session, fetchImpl) {
+  const h = newCtx();
+  h.ctx.supabase._session = session;
+  h.ctx.fetch = fetchImpl || ((url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : {})));
+  vm.runInContext(SRC, h.ctx);
+  return h;
+}
+
+const gateUp = (h) => !h.$get("#auth-gate").classList.contains("hide");
+
+async function scenarioI() {
+  console.log("I) with no session the gate stays up and no token is sent");
+  const seen = [];
+  const h = bootAuth(null, (url, opts) => {
+    seen.push({ url, auth: opts && opts.headers && opts.headers.Authorization });
+    return Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : {}));
+  });
+  await tick(); await tick(); await tick();
+
+  check("gate is visible", gateUp(h));
+  check("no call carried an Authorization header",
+    seen.every(s => s.auth === undefined), JSON.stringify(seen));
+}
+
+/* ---------------- J: an existing session opens the app ---------------- */
+async function scenarioJ() {
+  console.log("J) an existing session hides the gate and authorises API calls");
+  const seen = [];
+  const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
+    seen.push({ url, auth: opts && opts.headers && opts.headers.Authorization });
+    return Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : []));
+  });
+  await tick(); await tick(); await tick();
+
+  check("gate is hidden", !gateUp(h));
+  // the load-time loadModels() fires before the session resolves, so the
+  // authorised call is the retry that startSession triggers
+  check("a /api/models call carried the bearer token",
+    seen.some(s => s.url === "/api/models" && s.auth === "Bearer tok-abc"),
+    JSON.stringify(seen));
+}
+
+/* ---------------- K: signing in and out ---------------- */
+async function scenarioK() {
+  console.log("K) sign-in opens the app, sign-out closes it again");
+  const h = bootAuth(null);
+  await tick(); await tick(); await tick();
+  check("gate up before sign-in", gateUp(h));
+
+  h.$get("#auth-email").value = "a@b.com";
+  h.$get("#auth-password").value = "pw";
+  h.$get("#btn-signin")._fire("click");
+  await tick(); await tick(); await tick();
+
+  check("gate hidden after sign-in", !gateUp(h));
+
+  h.$get("#btn-signout")._fire("click");
+  await tick(); await tick();
+
+  check("gate back up after sign-out", gateUp(h));
+  check("sign-out message shown",
+    /signed out/i.test(h.$get("#auth-msg").textContent || ""),
+    `msg='${h.$get("#auth-msg").textContent}'`);
+}
+
+/* ---------------- L: a 401 mid-session returns to the gate ---------------- */
+async function scenarioL() {
+  console.log("L) a 401 during a session drops back to the gate");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(url === "/api/config" ? jsonRes(200, CFG) : jsonRes(401, { error: "no" })));
+  await tick(); await tick(); await tick();
+
+  check("gate is up again after a 401", gateUp(h));
+  check("expiry is explained",
+    /expired/i.test(h.$get("#auth-msg").textContent || ""),
+    `msg='${h.$get("#auth-msg").textContent}'`);
+}
+
+for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
+                 scenarioI, scenarioJ, scenarioK, scenarioL]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

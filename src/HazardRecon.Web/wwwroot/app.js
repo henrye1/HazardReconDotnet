@@ -20,6 +20,79 @@ function readJson(r) {
   });
 }
 
+/* ---------- session ---------- */
+let SB = null;          // supabase client
+let TOKEN = null;       // current access token
+
+/* Every API call goes through here: the token is injected, and a 401 means the
+   session died underneath us, so we drop back to the gate rather than leaving
+   the UI wedged. A 401 with no token in hand is just the pre-login state - the
+   gate is already up, so saying "expired" there would be a lie. */
+function api(path, options) {
+  const opts = options || {};
+  const headers = Object.assign({}, opts.headers || {});
+  if (TOKEN) headers.Authorization = "Bearer " + TOKEN;
+  return fetch(path, Object.assign({}, opts, { headers })).then((r) => {
+    if (r.status === 401 && TOKEN) showGate("Your session expired - please sign in again.");
+    return r;
+  });
+}
+
+function showGate(message) {
+  TOKEN = null;
+  $("#auth-gate").classList.remove("hide");
+  if (message) $("#auth-msg").textContent = message;
+}
+
+function hideGate() {
+  $("#auth-gate").classList.add("hide");
+  $("#auth-msg").textContent = "";
+}
+
+function startSession() {
+  return fetch("/api/config")
+    .then(readJson)
+    .then(({ j }) => {
+      const cfg = j || {};
+      SB = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+      return SB.auth.getSession();
+    })
+    .then((res) => {
+      const session = res && res.data ? res.data.session : null;
+      if (session) { TOKEN = session.access_token; hideGate(); loadModels(); }
+      else { showGate(""); }
+    });
+}
+
+$("#btn-signin").addEventListener("click", () => {
+  SB.auth.signInWithPassword({
+    email: $("#auth-email").value.trim(),
+    password: $("#auth-password").value,
+  }).then(({ data, error }) => {
+    if (error) { $("#auth-msg").textContent = error.message; return; }
+    TOKEN = data.session.access_token;
+    hideGate();
+    loadModels();
+  });
+});
+
+$("#btn-signup").addEventListener("click", () => {
+  SB.auth.signUp({
+    email: $("#auth-email").value.trim(),
+    password: $("#auth-password").value,
+  }).then(({ error }) => {
+    $("#auth-msg").textContent = error
+      ? error.message
+      : "Check your email for a confirmation link, then sign in.";
+  });
+});
+
+$("#btn-signout").addEventListener("click", () => {
+  SB.auth.signOut().then(() => showGate("Signed out."));
+});
+
+startSession();
+
 /* ---------- step 1: folder paths ---------- */
 const MAX_SETS = 4;
 let PATHS = 0;
@@ -80,7 +153,7 @@ function loadModels() {
   const sel = $("#model");
   const note = $("#model-note");
   addModelOption("", "Skip AI analysis");
-  return fetch("/api/models")
+  return api("/api/models")
     .then(readJson)
     .then(({ ok, j }) => {
       if (!ok || !Array.isArray(j)) {
@@ -106,7 +179,7 @@ function discover() {
   const paths = pathValues();
   const fd = new FormData();
   paths.forEach(p => fd.append("paths", p));
-  return fetch("/api/discover", { method: "POST", body: fd })
+  return api("/api/discover", { method: "POST", body: fd })
     .then(readJson)
     .then(({ ok, status, j }) => {
       if (!ok || !j) throw new Error((j && j.error) || `Discovery failed (server returned ${status}).`);
@@ -192,7 +265,7 @@ function beginRun() {
 }
 
 function startRun(hasRetried) {
-  fetch("/api/run", {
+  api("/api/run", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_id: RUN_ID, model_id: $("#model").value || null })
   }).then(readJson)
@@ -232,7 +305,7 @@ function pollFailed(msg) {
 }
 
 function poll() {
-  fetch("/api/job/" + RUN_ID).then(readJson).then(({ ok, status, j }) => {
+  api("/api/job/" + RUN_ID).then(readJson).then(({ ok, status, j }) => {
     // the server forgot this run (it was restarted) - polling can never
     // succeed again, so stop instead of spinning on "running" forever
     if (status === 404) {
@@ -340,7 +413,7 @@ function sendChat() {
   const btn = $("#btn-chat");
   btn.disabled = true; input.disabled = true;
   const thinking = addChatBubble("bot thinking", "thinking&hellip;");
-  fetch("/api/chat", {
+  api("/api/chat", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_id: RUN_ID, message: msg })
   }).then(r => r.json().then(j => ({ ok: r.ok, j })))
