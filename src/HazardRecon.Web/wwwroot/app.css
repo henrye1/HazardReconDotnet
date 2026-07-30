@@ -110,7 +110,9 @@ body{
 }
 .navitem:hover{background:rgba(255,255,255,.06);color:#fff}
 .navitem.on{background:rgba(255,255,255,.12);border-right-color:var(--cl-action-color);color:#fff}
-.navitem.dead{cursor:default}
+/* Reports and Help are placeholders in the reference too. Dimmed further than an
+   inactive-but-clickable item so they do not invite a click that does nothing. */
+.navitem.dead{cursor:default;opacity:.35}
 .navitem.dead:hover{background:transparent;color:rgba(255,255,255,.62)}
 
 .sideuser{
