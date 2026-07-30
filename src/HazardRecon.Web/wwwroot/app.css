@@ -255,14 +255,26 @@ tr.clickable:hover .rowgo{color:var(--cl-action-color)}
 .rail{padding:22px 40px;background:#fff;border-bottom:1px solid var(--cl-border-color)}
 .railinner{max-width:1000px;margin:0 auto;display:flex;align-items:center;flex-wrap:wrap}
 .railinner .st{display:flex;align-items:center;flex:1;min-width:170px}
+/* the step itself is the control; the connector stays outside it so the button
+   holds only phrasing content */
+.railinner .stbtn{
+  display:flex;align-items:center;gap:12px;min-width:0;
+  border:0;background:transparent;padding:0;font-family:inherit;text-align:left;
+  cursor:default;
+}
+.railinner .st.nav .stbtn{cursor:pointer}
+/* only the label reacts: the number keeps its own state colour */
+.railinner .st.nav .stbtn:hover .tx b{color:var(--cl-primary-color)}
 .railinner .st .n{
   width:44px;height:44px;flex:none;display:grid;place-items:center;
   font-size:15px;font-weight:700;background:var(--cl-primary-50);color:var(--cl-primary-color);
 }
 .railinner .st.on .n{background:var(--cl-primary-color);color:#fff}
 .railinner .st.was .n{background:var(--cl-action-color);color:#fff}
-.railinner .st .tx{display:grid;gap:2px;min-width:0;margin-left:12px}
-.railinner .st .tx b{font-size:14px;font-weight:700;white-space:nowrap}
+.railinner .st .tx{display:grid;gap:2px;min-width:0}
+/* stated rather than inherited: a step that cannot be clicked is a disabled
+   button, and the browser would grey its label - including the current step's */
+.railinner .st .tx b{font-size:14px;font-weight:700;white-space:nowrap;color:var(--cl-text-color)}
 .railinner .st .tx span{font-size:12px;color:var(--cl-off-text-color);white-space:nowrap}
 .railinner .st .line{flex:1;height:2px;background:var(--cl-border-color);margin:0 16px;min-width:20px}
 .railinner .st:last-child .line{display:none}

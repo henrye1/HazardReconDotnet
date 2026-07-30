@@ -868,6 +868,92 @@ async function scenarioW() {
     !/ran in/.test(h.$get("#detail-meta").textContent), `meta='${h.$get("#detail-meta").textContent}'`);
 }
 
+const INVENTORY_FIX = {
+  run_id: "RID1",
+  inventory: { root: "r", sets: [{ key: "K", label: "L", writeoff: "wo.csv" }] },
+  problems: [],
+};
+
+/* ---------------- Y: one step at a time, and the rail goes back ---------------- */
+async function scenarioY() {
+  console.log("Y) exactly one wizard step is on screen, and the rail walks back");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const shown = () => ["folders", "confirm", "run"]
+    .filter(s => !h.$get("#step-" + s).classList.contains("hide"));
+
+  h.$get("#nav-new")._fire("click");
+  check("folders only, at step 1", shown().join() === "folders", `shown=${shown().join()||"none"}`);
+
+  h.ctx.showInventory(INVENTORY_FIX);
+  check("confirm replaces folders", shown().join() === "confirm", `shown=${shown().join()||"none"}`);
+
+  h.ctx.beginRun();
+  await tick(); await tick();
+  check("run replaces confirm", shown().join() === "run", `shown=${shown().join()||"none"}`);
+
+  // the rail can return to a step already visited
+  check("step 1 is offered", h.$get("#rail-0").disabled === false);
+  check("step 2 is offered", h.$get("#rail-1").disabled === false);
+  check("the current step is not offered", h.$get("#rail-2").disabled === true);
+  check("results is not offered before there is one", h.$get("#rail-3").disabled === true);
+
+  h.$get("#rail-0")._fire("click");
+  check("the rail returns to folders", shown().join() === "folders", `shown=${shown().join()||"none"}`);
+  check("the title follows", /Choose your analysis folders/.test(h.$get("#step-title").textContent));
+  check("forward stays reachable once visited", h.$get("#rail-2").disabled === false);
+
+  h.$get("#rail-2")._fire("click");
+  check("and forward again to the run", shown().join() === "run", `shown=${shown().join()||"none"}`);
+
+  // a fresh run forgets where the last one got to
+  h.$get("#nav-new")._fire("click");
+  check("a new run cannot jump ahead", h.$get("#rail-1").disabled === true &&
+    h.$get("#rail-2").disabled === true, "later steps should be closed again");
+}
+
+/* ---------------- YY: walking back mid-run and checking again ---------------- */
+async function scenarioYY() {
+  console.log("YY) re-checking folders mid-run drops the poll it supersedes");
+  const h = boot((url) => {
+    if (url === "/api/run") return Promise.resolve(jsonRes(200, { run_id: "RID1", status: "running" }));
+    if (url.startsWith("/api/job/"))
+      return Promise.resolve(jsonRes(200, { id: "RID1", status: "running", log: [], stages: [] }));
+    return Promise.resolve(jsonRes(200, {}));
+  });
+
+  h.ctx.beginRun();
+  await tick(); await tick();
+  check("polling while the run is live", h.timers.armed !== null);
+
+  // back to the folders, then check again - the old poll must not survive it
+  h.$get("#rail-0")._fire("click");
+  check("the rail walked back mid-run", !h.$get("#step-folders").classList.contains("hide"));
+  check("the run step is put away", h.$get("#step-run").classList.contains("hide"));
+
+  h.$get("#btn-check")._fire("click");
+  check("the superseded poll was dropped", h.timers.armed === null,
+    "a live poll would chase the run id discovery is replacing");
+}
+
+/* ---------------- Z: the Back button uses the same path ---------------- */
+async function scenarioZ() {
+  console.log("Z) Back on the confirm step returns to folders");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  h.$get("#nav-new")._fire("click");
+  h.ctx.showInventory(INVENTORY_FIX);
+  h.$get("#btn-back-folders")._fire("click");
+
+  check("folders is back", !h.$get("#step-folders").classList.contains("hide"));
+  check("confirm is put away", h.$get("#step-confirm").classList.contains("hide"));
+  check("the rail marks step 1 current", h.$get("#rail-0").disabled === true);
+}
+
 /* ---------------- X: a run that kept no log ---------------- */
 async function scenarioX() {
   console.log("X) a run with no log says so rather than showing an empty panel");
@@ -887,6 +973,7 @@ async function scenarioX() {
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
-                 scenarioU, scenarioV, scenarioW, scenarioX]) { await s(); console.log(""); }
+                 scenarioU, scenarioV, scenarioW, scenarioX,
+                 scenarioY, scenarioYY, scenarioZ]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

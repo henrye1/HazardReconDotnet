@@ -151,11 +151,11 @@ function showScreen(name) {
 function resetWizard() {
   RUN_ID = null;
   stopPolling();
-  setStep(0);
-  $("#step-folders").classList.remove("hide");
-  ["#step-confirm", "#step-run"].forEach(s => $(s).classList.add("hide"));
   RESULT = null;
   DETAIL_LOG = [];
+  // a fresh run has been nowhere, so nothing is reachable from the rail yet
+  STEP_REACHED = 0;
+  setStep(0);
   $("#chat-log").innerHTML = "";
   showScreen("wizard");
 }
@@ -167,8 +167,6 @@ function showIdentity(session) {
   $("#user-initials").textContent = email ? email.slice(0, 2).toUpperCase() : "—";
 }
 
-/* The rail is the only place the wizard's position is expressed; each card
-   still shows and hides itself as the flow moves. */
 const STEP_TITLES = [
   "Choose your analysis folders",
   "Confirm what was found",
@@ -176,19 +174,48 @@ const STEP_TITLES = [
   "Results",
 ];
 
+/* One body per step. Step 4 is the run detail, which is a screen of its own, so
+   it has no entry here. */
+const STEP_BODIES = ["#step-folders", "#step-confirm", "#step-run"];
+
+let STEP_AT = 0;
+
+/* The furthest step this run has got to. A step already visited can be returned
+   to from the rail; one not yet reached cannot be jumped to, because getting
+   there means doing the work the step before it asks for. */
+let STEP_REACHED = 0;
+
+/* The rail expresses the wizard's position and the step bodies follow it, so a
+   step can never be left on screen under the one that replaced it. */
 function setStep(n) {
+  STEP_AT = n;
+  if (n > STEP_REACHED) STEP_REACHED = n;
+
   $("#step-title").textContent = STEP_TITLES[n] || STEP_TITLES[0];
-  const rail = $("#rail");
-  const steps = rail.children || [];
-  for (let i = 0; i < steps.length; i++) {
-    const st = steps[i];
-    if (!st.classList) continue;
-    st.classList.remove("on");
-    st.classList.remove("was");
-    if (i < n) st.classList.add("was");
-    else if (i === n) st.classList.add("on");
+  STEP_BODIES.forEach((sel, i) => $(sel).classList.toggle("hide", i !== n));
+
+  // addressed by id rather than by walking the rail's children, so the state is
+  // set explicitly for each step instead of depending on the markup's shape
+  for (let i = 0; i < STEP_TITLES.length; i++) {
+    $("#st-" + i).classList.toggle("on", i === n);
+    $("#st-" + i).classList.toggle("was", i < n);
+
+    // the results step is only reachable once there is a result to show
+    const canGo = i !== n && i <= STEP_REACHED && (i !== 3 || RESULT !== null);
+    $("#st-" + i).classList.toggle("nav", canGo);
+    $("#rail-" + i).disabled = !canGo;
   }
 }
+
+function goStep(n) {
+  if (n === STEP_AT || n > STEP_REACHED) return;
+  // step 4 is the run detail rather than a wizard body
+  if (n === 3) { if (RESULT) showResults(RESULT); return; }
+  setStep(n);
+  $(STEP_BODIES[n]).scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+STEP_TITLES.forEach((_, i) => $("#rail-" + i).addEventListener("click", () => goStep(i)));
 
 $("#run-search").addEventListener("input", () => {
   RUN_FILTER = $("#run-search").value || "";
@@ -524,6 +551,10 @@ $("#btn-check").addEventListener("click", () => {
   const btn = $("#btn-check");
   btn.disabled = true;
   $("#btn-check-tx").textContent = "Checking...";
+  // Checking again supersedes anything in flight. Now that the rail can walk
+  // back mid-run, a live poll would otherwise carry on against the run id this
+  // discovery is about to replace, and report that as a failure.
+  stopPolling();
   discover()
     .catch(e => showError($("#step-confirm"), e.message))
     .finally(() => {
@@ -543,7 +574,6 @@ function showError(card, msg) {
 function showInventory(j) {
   RUN_ID = j.run_id;
   setStep(1);
-  $("#step-confirm").classList.remove("hide");
   const card = $("#card-inv");
   const old = card.querySelector(".err"); if (old) old.remove();
 
@@ -597,10 +627,12 @@ function failRun(msg) {
 function beginRun() {
   if (!RUN_ID) return;
   stopPolling();
+  // cleared before the rail is drawn: the previous run's results must not stay
+  // reachable from step 4 while a new run is starting
+  RESULT = null;
   // Run again is offered from the run detail, so come back to the wizard first
   showScreen("wizard");
   setStep(2);
-  $("#step-run").classList.remove("hide");
   setChatOpen(false);
   const stale = $("#step-run").querySelector(".err"); if (stale) stale.remove();
 
@@ -721,12 +753,7 @@ $("#btn-rerun").addEventListener("click", beginRun);
 
 /* Back to the folders, keeping whatever was picked - the inventory is discarded
    because the folders may change before the next check. */
-$("#btn-back-folders").addEventListener("click", () => {
-  setStep(0);
-  $("#step-confirm").classList.add("hide");
-  $("#step-folders").classList.remove("hide");
-  $("#step-folders").scrollIntoView({ behavior: "smooth", block: "start" });
-});
+$("#btn-back-folders").addEventListener("click", () => goStep(0));
 
 function setBadge(text, cls) {
   const b = $("#run-badge");
