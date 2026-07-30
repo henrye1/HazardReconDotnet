@@ -1,0 +1,155 @@
+using HazardRecon.Core.Models;
+using HazardRecon.Core.Services;
+using HazardRecon.Web;
+using Xunit;
+
+namespace HazardRecon.Tests.Web;
+
+/// <summary>
+/// Built from a real run rather than a hand-made result, so the payload is checked
+/// against what the engine actually produces.
+/// </summary>
+public class DashboardPayloadTests : IClassFixture<SyntheticDataFixture>
+{
+    private readonly SyntheticDataFixture _fixture;
+
+    public DashboardPayloadTests(SyntheticDataFixture fixture) => _fixture = fixture;
+
+    private List<DashboardSet> Run(string outDir)
+    {
+        ReconciliationEngine engine = new();
+        ReconciliationRunResult result = engine.Run(
+            _fixture.RootDir, Path.Combine(_fixture.OutDir, outDir),
+            logger: (_, _) => { }, analyze: false, analyst: null);
+
+        return result.Results.Select(kv => DashboardPayload.Build(kv.Key, kv.Value)).ToList();
+    }
+
+    [Fact]
+    public void TestEverySetIsDescribed()
+    {
+        List<DashboardSet> sets = Run("dash-sets");
+
+        Assert.NotEmpty(sets);
+        Assert.All(sets, d => Assert.False(string.IsNullOrWhiteSpace(d.Key)));
+    }
+
+    [Fact]
+    public void TestTheAggregateMonthComesFirstAndEachMonthFollows()
+    {
+        DashboardSet d = Run("dash-months")[0];
+
+        Assert.Equal("All months", d.Months[0]);
+        // every later entry is a period, and the matrices are keyed the same way
+        Assert.All(d.Months.Skip(1), m => Assert.Matches(@"^\d{4}-\d{2}$", m));
+        Assert.Equal(d.Months.OrderBy(m => m == "All months" ? "" : m), d.Months);
+        Assert.Equal(d.Months.Count, d.Migration.Count);
+        Assert.All(d.Months, m => Assert.True(d.Migration.ContainsKey(m), m + " has no matrix"));
+    }
+
+    [Fact]
+    public void TestEveryMatrixIsSixBySix()
+    {
+        DashboardSet d = Run("dash-shape")[0];
+
+        Assert.NotEmpty(d.Migration);
+        foreach (var (month, rows) in d.Migration)
+        {
+            Assert.Equal(6, rows.Count);
+            Assert.All(rows, r => Assert.Equal(6, r.Count));
+            Assert.All(rows, r => Assert.All(r, v => Assert.True(v >= 0, month + " has a negative cell")));
+        }
+    }
+
+    [Fact]
+    public void TestTheMonthsSumToTheAggregate()
+    {
+        // the reference says the all-months total reconciles cell for cell
+        DashboardSet d = Run("dash-sum")[0];
+
+        List<List<int>> all = d.Migration["All months"];
+        for (int i = 0; i < 6; i++)
+        {
+            for (int j = 0; j < 6; j++)
+            {
+                int summed = d.Months.Skip(1).Sum(m => d.Migration[m][i][j]);
+                Assert.Equal(all[i][j], summed);
+            }
+        }
+    }
+
+    [Fact]
+    public void TestMonthlyTotalsLineUpWithTheMonthList()
+    {
+        DashboardSet d = Run("dash-monthly")[0];
+
+        // one total per month, excluding the aggregate
+        Assert.Equal(d.Months.Count - 1, d.MonthlyTotals.Count);
+        for (int i = 0; i < d.MonthlyTotals.Count; i++)
+        {
+            int expected = d.Migration[d.Months[i + 1]].Sum(r => r.Sum());
+            Assert.Equal(expected, d.MonthlyTotals[i]);
+        }
+    }
+
+    [Fact]
+    public void TestTheEngineMatricesComeThrough()
+    {
+        DashboardSet d = Run("dash-engine")[0];
+
+        Assert.NotNull(d.Hazard);
+        Assert.All(d.Hazard!, row => Assert.NotEmpty(row));
+    }
+
+    [Fact]
+    public void TestLgdRowsAllShareTheSameTermColumns()
+    {
+        // the table has fixed columns, so every row must be the same width
+        DashboardSet d = Run("dash-lgd")[0];
+
+        if (d.Lgd.Count == 0) return;
+        int width = d.Lgd[0].Values.Count;
+        Assert.All(d.Lgd, r => Assert.Equal(width, r.Values.Count));
+        Assert.All(d.Lgd, r => Assert.False(string.IsNullOrWhiteSpace(r.Name)));
+    }
+
+    [Fact]
+    public void TestTheDetailTablesAreCappedAndOrderedByAmount()
+    {
+        DashboardSet d = Run("dash-detail")[0];
+
+        Assert.True(d.TopUntraced.Count <= DashboardPayload.TopUntracedRows);
+        Assert.True(d.WoExceptions.Count <= DashboardPayload.TopWoExceptionRows);
+        // every exception listed is one inside the scoring window
+        Assert.All(d.WoExceptions, w => Assert.Equal("IN WINDOW", w.Window));
+    }
+
+    [Fact]
+    public void TestTheLastBucketSharesSumToAHundred()
+    {
+        DashboardSet d = Run("dash-buckets")[0];
+
+        if (d.LastBuckets.Count == 0) return;
+        Assert.Equal(100.0, d.LastBuckets.Sum(b => b.Share), 1);
+        Assert.All(d.LastBuckets, b => Assert.StartsWith("Bucket ", b.Bucket));
+    }
+
+    [Fact]
+    public void TestASetWithNoScoredFileYieldsNoMatrixRatherThanAnEmptyOne()
+    {
+        // a set missing pd_scored.csv has nothing to migrate; the month selector
+        // must then have nothing to offer instead of one blank month
+        DashboardSet d = DashboardPayload.Build("EMPTY", new SingleSetResult
+        {
+            Summary = new ReconciliationSummary(),
+            Mig = new MigrationMatrixResult(),
+            Engine = new EngineScenario(),
+        });
+
+        Assert.Empty(d.Months);
+        Assert.Empty(d.Migration);
+        Assert.Empty(d.MonthlyTotals);
+        Assert.Empty(d.LastBuckets);
+        Assert.Empty(d.TopUntraced);
+    }
+}

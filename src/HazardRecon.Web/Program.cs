@@ -357,6 +357,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 wo_total = kv.Value.Summary.WoNotDefaultTotal,
                 wo_in_window = kv.Value.Summary.WoInWindow,
                 wo_in_window_fmt = AccountUtils.Money(kv.Value.Summary.WoInWindowAmount),
+                wo_pre_window = kv.Value.Summary.WoPreWindow,
                 wo_post_window = kv.Value.Summary.WoPostWindow,
                 scored = kv.Value.Summary.ScoredDistinct,
                 ifrs9_overlap = kv.Value.Summary.Ifrs9KeyOverlap,
@@ -375,6 +376,10 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 workbook = outResult.Workbook,
                 dashboard = outResult.Dashboard,
                 memo = outResult.Memo,
+                // the dashboard's own data, captured now: rebuilding the migration
+                // matrix needs pd_scored.csv, and inputs are purged long before runs
+                dashboard_sets = outResult.Results
+                    .Select(kv => DashboardPayload.Build(kv.Key, kv.Value)).ToList(),
                 // stored with the run so the timing and file sizes survive a restart
                 // and a reopened run shows the same detail as a fresh one. Stages are
                 // deliberately not kept: they describe a run in flight, and the
