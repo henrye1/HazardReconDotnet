@@ -738,11 +738,8 @@ const DETAIL_RESULT = {
     files: ["JUN2026_untraced_defaults.csv"],
   }],
   workbook: "reconciliation.xlsx", dashboard: "reconciliation_dashboard.html",
+  // no stages: a stored run does not keep them
   memo: "analysis_memo.docx", elapsed_seconds: 41.2,
-  stages: [
-    { key: "discover", name: "Read the analysis folders", detail: "Find the files", status: "done", seconds: 0.4 },
-    { key: "JUN2026:check1", name: "check 1", detail: "Trace defaults", status: "done", seconds: 12.1 },
-  ],
   outputs: [
     { name: "analysis_memo.docx", bytes: 24576 },
     { name: "reconciliation.xlsx", bytes: 1572864 },
@@ -858,7 +855,6 @@ async function scenarioW() {
 
   const old = JSON.parse(JSON.stringify(DETAIL_RESULT));
   delete old.outputs;
-  delete old.stages;
   delete old.elapsed_seconds;
   h.ctx.showResults(old, []);
 

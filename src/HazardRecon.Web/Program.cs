@@ -375,9 +375,10 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 workbook = outResult.Workbook,
                 dashboard = outResult.Dashboard,
                 memo = outResult.Memo,
-                // stored with the run so the stage list and file sizes survive a
-                // restart and a reopened run shows the same detail as a fresh one
-                stages = capturedJob.Stages,
+                // stored with the run so the timing and file sizes survive a restart
+                // and a reopened run shows the same detail as a fresh one. Stages are
+                // deliberately not kept: they describe a run in flight, and the
+                // progress screen is the only thing that shows them.
                 elapsed_seconds = capturedJob.StartedAt == null
                     ? (double?)null
                     : Math.Round((capturedJob.FinishedAt.Value - capturedJob.StartedAt.Value).TotalSeconds, 1),
