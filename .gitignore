@@ -2,7 +2,10 @@ bin/
 obj/
 .vs/
 *.user
-runs/
-output/
+# anchored to the repo root: unanchored "runs/" also matched the
+# src/HazardRecon.Web/Runs/ source folder, because core.ignorecase is true on
+# Windows. The app's runtime runs/ dir lives under bin/, which is ignored above.
+/runs/
+/output/
 .superpowers/
 .claude/
