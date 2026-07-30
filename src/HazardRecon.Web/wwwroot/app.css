@@ -536,6 +536,11 @@ table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3
 .validrow span.tx{font-size:14px}
 
 /* ---------- dashboard tab ---------- */
+iframe#res-frame{
+  width:100%;height:760px;border:1px solid var(--cl-border-color);
+  border-radius:var(--border-radius);background:#fff;
+}
+
 /* minmax(0,1fr) rather than 1fr: the wide tables inside must be allowed to
    scroll rather than stretching the column past the viewport */
 .dashgrid{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}

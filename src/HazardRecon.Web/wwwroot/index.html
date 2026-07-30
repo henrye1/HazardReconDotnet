@@ -382,6 +382,20 @@
           </div>
 
           <div id="dash-setdetail"></div>
+
+          <!-- Runs reconciled before the dashboard captured its own data have none
+               of the sections above. The engine's file still has all of them, so it
+               is embedded rather than leaving the tab looking half broken. -->
+          <div class="card hide" id="dash-legacy">
+            <div class="cardhead"><span>Reconciliation dashboard</span></div>
+            <div class="cardbody" style="display:grid;gap:12px">
+              <div class="warn" style="margin:0">This run was reconciled before the dashboard kept its
+                own copy of the migration matrix and engine outputs, so the sections above cannot be
+                drawn for it. The engine's own dashboard is shown below instead.
+                <b>Run again</b> to get the interactive version.</div>
+              <iframe id="res-frame" title="Reconciliation dashboard"></iframe>
+            </div>
+          </div>
         </div>
 
         <div class="hide" id="tab-files">

@@ -1081,6 +1081,47 @@ async function scenarioDE() {
   check("monthly totals are listed", /2026-01[\s\S]*?27/.test(mo) && /2026-02[\s\S]*?12/.test(mo));
 }
 
+/* ---------------- DL: a run stored before the dashboard kept its own data ---------------- */
+async function scenarioDL() {
+  console.log("DL) an older run falls back to the engine's dashboard instead of losing eight sections");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  // exactly what a run reconciled before the payload existed looks like
+  const old = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  delete old.commentary;
+  delete old.analysis;
+  delete old.dashboard_sets;
+  h.ctx.showResults(old, []);
+
+  check("the fallback is shown", !h.$get("#dash-legacy").classList.contains("hide"));
+  check("it says why", /reconciled before the dashboard kept its own copy/
+    .test(h.$get("#dash-legacy").innerHTML) === false ||
+    /before the dashboard kept its/.test(h.$get("#dash-legacy").innerHTML));
+  check("the engine's dashboard is embedded",
+    /reconciliation_dashboard\.html/.test(h.$get("#res-frame").src),
+    `src='${h.$get("#res-frame").src}'`);
+  check("what the run does have still renders",
+    /15,813/.test(h.$get("#dash-check1").innerHTML) &&
+    /733,828/.test(h.$get("#dash-census").innerHTML));
+
+  // and a current run does not get the fallback
+  const current = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  current.dashboard_sets = [JSON.parse(JSON.stringify(DASH_SET_FIX))];
+  h.ctx.showResults(current, []);
+  check("a current run has no fallback", h.$get("#dash-legacy").classList.contains("hide"));
+
+  // a run that skipped AI still captured its dashboard data
+  const partial = JSON.parse(JSON.stringify(current));
+  delete partial.analysis;
+  partial.commentary = ["VERDICT (JUN2026): no exceptions - all tie out."];
+  h.ctx.showResults(partial, []);
+  check("a run that merely skipped AI keeps the native dashboard",
+    h.$get("#dash-legacy").classList.contains("hide"),
+    "skipping analysis must not trigger the fallback");
+}
+
 /* ---------------- DG: engine outputs and the per-set detail ---------------- */
 async function scenarioDG() {
   console.log("DG) the hazard matrix, PD by bucket, LGD and the set detail");
@@ -1328,6 +1369,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

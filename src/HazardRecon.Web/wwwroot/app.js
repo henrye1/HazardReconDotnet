@@ -960,6 +960,15 @@ function renderDashboardTab(res) {
   // the engine still writes the standalone file; the link opens it
   $("#res-open").href = outputUrl(res.dashboard);
 
+  // A run stored before the dashboard captured its own data has none of the
+  // sections that read from it. Rather than leave eight cards silently missing,
+  // fall back to the engine's file, which does have them.
+  const native = (res.commentary || []).length > 0 || !!res.analysis
+    || (res.dashboard_sets || []).length > 0;
+
+  $("#dash-legacy").classList.toggle("hide", native);
+  if (!native) $("#res-frame").src = outputUrl(res.dashboard);
+
   renderDashTiles(res);
   renderDashCommentary(res);
   renderDashAi(res);
