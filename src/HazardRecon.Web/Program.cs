@@ -6,6 +6,7 @@ using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
 using HazardRecon.Web.Supabase;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,7 +26,23 @@ if (!supabaseOptions.IsConfigured)
     return 1;
 }
 
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        // Supabase signs with rotating asymmetric keys published as a JWKS, which
+        // the handler discovers from the issuer's OpenID configuration document.
+        // If a project serves no discovery document, this needs the explicit JWKS
+        // configuration manager - see docs/superpowers/2026-07-30-supabase-verified-behaviour.md
+        options.Authority = SupabaseJwt.Issuer(supabaseOptions);
+        options.TokenValidationParameters = SupabaseJwt.BuildValidationParameters(supabaseOptions);
+    });
+
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -122,7 +139,7 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         problems,
         log = probe.Lines
     });
-});
+}).RequireAuthorization();
 
 // POST /api/run
 app.MapPost("/api/run", async (HttpContext ctx) =>
@@ -224,7 +241,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
     });
 
     return Results.Ok(new { run_id = rid, status = "running" });
-});
+}).RequireAuthorization();
 
 // GET /api/job/{rid}
 app.MapGet("/api/job/{rid}", (string rid) =>
@@ -240,7 +257,7 @@ app.MapGet("/api/job/{rid}", (string rid) =>
         error = job.Error,
         result = job.Result
     });
-});
+}).RequireAuthorization();
 
 // POST /api/chat
 app.MapPost("/api/chat", async (HttpContext ctx) =>
@@ -267,7 +284,7 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
         return Results.Json(new { error = chatRes.ErrorMessage }, statusCode: 503);
 
     return Results.Ok(new { reply = chatRes.Reply, reply_html = chatRes.ReplyHtml });
-});
+}).RequireAuthorization();
 
 // GET /runs/{rid}/output/{filename}
 app.MapGet("/runs/{rid}/output/{filename}", (string rid, string filename) =>
@@ -289,7 +306,7 @@ app.MapGet("/runs/{rid}/output/{filename}", (string rid, string filename) =>
         return Results.File(filePath, contentType: "text/html; charset=utf-8");
 
     return Results.File(filePath, contentType: "application/octet-stream", fileDownloadName: filename);
-});
+}).RequireAuthorization();
 
 // GET /api/models
 app.MapGet("/api/models", async () =>
@@ -314,7 +331,15 @@ app.MapGet("/api/models", async () =>
     {
         return Results.Json(new { error = $"Could not list models - {ex.Message}" }, statusCode: 503);
     }
-});
+}).RequireAuthorization();
+
+// GET /api/config - the browser needs the project URL and the public anon key to
+// start a session. The service-role key is never exposed here.
+app.MapGet("/api/config", () => Results.Ok(new
+{
+    supabaseUrl = supabaseOptions.BaseUrl,
+    supabaseAnonKey = supabaseOptions.AnonKey
+}));
 
 // GET /health
 app.MapGet("/health", () => Results.Ok(new { ok = true, runs = jobs.Count }));
@@ -326,3 +351,6 @@ Console.WriteLine("=============================================================
 
 app.Run();
 return 0;
+
+// exposed so WebApplicationFactory can boot the real app in tests
+public partial class Program { }
