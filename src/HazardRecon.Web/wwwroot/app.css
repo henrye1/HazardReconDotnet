@@ -485,11 +485,6 @@ table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3
 /* a set's own header is the strong one on this page */
 .cardhead.strong{background:var(--cl-primary-color);color:#fff;flex-wrap:wrap}
 .cardhead.strong .sub{color:var(--cl-action-opacity-color);font-weight:500}
-/* a card header that is itself the disclosure control */
-.cardhead.toggle{
-  width:100%;border:0;cursor:pointer;font-family:var(--font-family);
-  justify-content:flex-start;gap:8px;text-align:left;
-}
 .headlink{
   font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;
 }

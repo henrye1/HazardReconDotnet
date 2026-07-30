@@ -784,17 +784,16 @@ async function scenarioU() {
   check("validation reports the pass", /verified/.test(sum) && /<b>PASS<\/b>/.test(sum) &&
     /max cell difference 0/.test(sum));
 
-  // stages
-  h.$get("#tab-btn-stages")._fire("click");
-  check("the stages tab shows", !h.$get("#tab-stages").classList.contains("hide"));
+  // logs - last tab, and the stage list does not appear here at all
+  h.$get("#tab-btn-logs")._fire("click");
+  check("the logs tab shows", !h.$get("#tab-logs").classList.contains("hide"));
   check("the summary tab hides", h.$get("#tab-summary").classList.contains("hide"));
-  check("every stage is listed", (h.$get("#detail-stages").innerHTML.match(/class="stage /g) || []).length === 2);
-  check("the stage count totals up", /2 of 2 complete/.test(h.$get("#detail-stage-count").textContent),
-    `count='${h.$get("#detail-stage-count").textContent}'`);
-  check("the stored log is available", /CHECK 1/.test(h.$get("#detail-log").innerHTML));
-  check("the log starts closed", h.$get("#detail-log").classList.contains("hide"));
-  h.$get("#btn-detail-log")._fire("click");
-  check("the log opens", !h.$get("#detail-log").classList.contains("hide"));
+  check("the stored log is shown", /CHECK 1/.test(h.$get("#detail-log").innerHTML));
+  check("the log is not hidden behind a toggle", !h.$get("#detail-log").classList.contains("hide"));
+  check("the empty state is not shown", h.$get("#detail-log-empty").classList.contains("hide"));
+  check("the log is counted and timed", /1 lines/.test(h.$get("#detail-log-count").textContent) &&
+    /41\.2s total/.test(h.$get("#detail-log-count").textContent),
+    `count='${h.$get("#detail-log-count").textContent}'`);
 
   // dashboard
   h.$get("#tab-btn-dashboard")._fire("click");
@@ -869,15 +868,29 @@ async function scenarioW() {
     `rows=${(files.match(/class="frow"/g) || []).length}`);
   check("no size is invented", !/undefined|NaN/.test(files));
   check("the summary still renders", /Scoring window/.test(h.$get("#tab-summary").innerHTML));
-  check("the stage count is simply empty", h.$get("#detail-stage-count").textContent === "",
-    `count='${h.$get("#detail-stage-count").textContent}'`);
   check("the meta omits a duration it does not have",
     !/ran in/.test(h.$get("#detail-meta").textContent), `meta='${h.$get("#detail-meta").textContent}'`);
+}
+
+/* ---------------- X: a run that kept no log ---------------- */
+async function scenarioX() {
+  console.log("X) a run with no log says so rather than showing an empty panel");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  h.ctx.showResults(DETAIL_RESULT, []);
+  h.$get("#tab-btn-logs")._fire("click");
+
+  check("the empty state is shown", !h.$get("#detail-log-empty").classList.contains("hide"));
+  check("the empty log panel is hidden", h.$get("#detail-log").classList.contains("hide"));
+  check("no line count is claimed", !/lines/.test(h.$get("#detail-log-count").textContent),
+    `count='${h.$get("#detail-log-count").textContent}'`);
 }
 
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
-                 scenarioU, scenarioV, scenarioW]) { await s(); console.log(""); }
+                 scenarioU, scenarioV, scenarioW, scenarioX]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -156,7 +156,7 @@
 
         <!-- step 1 : folders -->
         <div class="cols2" id="step-folders">
-          <div class="card" id="card-paths">
+          <div class="card">
             <div class="cardhead"><span>Analysis folders</span></div>
             <div class="cardbody">
               <p class="hint" style="margin:0 0 15px">Choose up to four analysis folders. Each folder holds
@@ -306,31 +306,14 @@
         </div>
         <div class="tabs">
           <button class="tab on" id="tab-btn-summary">Summary</button>
-          <button class="tab" id="tab-btn-stages">Stages</button>
           <button class="tab" id="tab-btn-dashboard">Dashboard</button>
           <button class="tab" id="tab-btn-files">Files</button>
+          <button class="tab" id="tab-btn-logs">Logs</button>
         </div>
       </div>
 
       <div class="wrap">
         <div class="stepgrid" id="tab-summary"></div>
-
-        <div class="stepgrid hide" id="tab-stages">
-          <div class="card">
-            <div class="cardhead">
-              <span>Engine stages</span>
-              <span class="sub" id="detail-stage-count"></span>
-            </div>
-            <div class="stages" id="detail-stages"></div>
-          </div>
-          <div class="card">
-            <button class="cardhead toggle" id="btn-detail-log">
-              <span class="ms-icon" style="font-size:20px" id="detail-log-ic">expand_more</span>
-              <span id="detail-log-tx">Show raw engine log</span>
-            </button>
-            <div class="logbox hide" id="detail-log"></div>
-          </div>
-        </div>
 
         <div class="hide" id="tab-dashboard">
           <div class="card">
@@ -351,6 +334,19 @@
           <div class="card">
             <div class="cardhead"><span>Output files</span></div>
             <div id="detail-files"></div>
+          </div>
+        </div>
+
+        <div class="hide" id="tab-logs">
+          <div class="card">
+            <div class="cardhead">
+              <span>Engine log</span>
+              <span class="sub" id="detail-log-count"></span>
+            </div>
+            <div class="logbox" id="detail-log"></div>
+            <div class="cardbody hide" id="detail-log-empty">
+              <p class="muted" style="margin:0">This run kept no log.</p>
+            </div>
           </div>
         </div>
       </div>

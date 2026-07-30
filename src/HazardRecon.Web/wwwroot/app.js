@@ -643,8 +643,8 @@ function stageTime(secs) {
   return Math.floor(t / 60) + "m " + String(t % 60).padStart(2, "0") + "s";
 }
 
-function renderStages(stages, target) {
-  $(target || "#stages").innerHTML = stages.map(s => {
+function renderStages(stages) {
+  $("#stages").innerHTML = stages.map(s => {
     const st = STAGE_ICON[s.status] ? s.status : "pending";
     return `<div class="stage st-${st}">` +
       `<span class="ms-icon">${STAGE_ICON[st]}</span>` +
@@ -798,7 +798,7 @@ function showResults(res, log) {
 
   renderDetailHeader(res);
   renderSummaryTab(res);
-  renderStagesTab(res);
+  renderLogsTab(res);
   renderDashboardTab(res);
   renderFilesTab(res);
   showTab("summary");
@@ -910,32 +910,23 @@ function validationRow(s) {
       <b>${escapeHtml(status)}</b>${diff == null ? "" : `, max cell difference ${diff}`}.</span></div>`;
 }
 
-/* ---------- stages tab ---------- */
-function renderStagesTab(res) {
-  const stages = Array.isArray(res.stages) ? res.stages : [];
-  renderStages(stages, "#detail-stages");
+/* ---------- logs tab ---------- */
+/* The engine's own log, as it was written. What the run *did* is on the progress
+   screen while it runs; here the log is the record that outlives it. */
+function renderLogsTab(res) {
+  const lines = Array.isArray(DETAIL_LOG) ? DETAIL_LOG : [];
 
-  const done = stages.filter(s => s.status !== "pending" && s.status !== "running").length;
-  const parts = stages.length ? [`${done} of ${stages.length} complete`] : [];
-  if (res.elapsed_seconds != null) parts.push(stageTime(res.elapsed_seconds) + " total");
-  $("#detail-stage-count").textContent = parts.join(" · ");
-
-  $("#detail-log").innerHTML = DETAIL_LOG.map(l =>
+  $("#detail-log").innerHTML = lines.map(l =>
     `<div><span class="t">${escapeHtml(l.t || "")}</span>` +
     `<span class="${escapeHtml(l.kind || "")}">${escapeHtml(l.msg || "")}</span></div>`).join("");
 
-  // each run opens with its log tucked away, however the last one was left
-  setDetailLogOpen(false);
-}
+  const parts = lines.length ? [`${fmt(lines.length)} lines`] : [];
+  if (res.elapsed_seconds != null) parts.push(stageTime(res.elapsed_seconds) + " total");
+  $("#detail-log-count").textContent = parts.join(" · ");
 
-let DETAIL_LOG_OPEN = false;
-function setDetailLogOpen(open) {
-  DETAIL_LOG_OPEN = open;
-  $("#detail-log").classList.toggle("hide", !open);
-  $("#detail-log-tx").textContent = open ? "Hide raw engine log" : "Show raw engine log";
-  $("#detail-log-ic").textContent = open ? "expand_less" : "expand_more";
+  $("#detail-log").classList.toggle("hide", lines.length === 0);
+  $("#detail-log-empty").classList.toggle("hide", lines.length > 0);
 }
-$("#btn-detail-log").addEventListener("click", () => setDetailLogOpen(!DETAIL_LOG_OPEN));
 
 /* ---------- dashboard tab ---------- */
 function renderDashboardTab(res) {
@@ -993,7 +984,7 @@ function renderFilesTab(res) {
 }
 
 /* ---------- tabs ---------- */
-const DETAIL_TABS = ["summary", "stages", "dashboard", "files"];
+const DETAIL_TABS = ["summary", "dashboard", "files", "logs"];
 
 function showTab(name) {
   DETAIL_TABS.forEach(t => {
