@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using HazardRecon.Core.Exporters;
 using HazardRecon.Core.Helpers;
 using HazardRecon.Core.Llm;
 using HazardRecon.Core.Models;
@@ -380,6 +381,12 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 // matrix needs pd_scored.csv, and inputs are purged long before runs
                 dashboard_sets = outResult.Results
                     .Select(kv => DashboardPayload.Build(kv.Key, kv.Value)).ToList(),
+                // the same sentences the workbook opens with, so the verdict on screen
+                // cannot disagree with the verdict in the signed-off spreadsheet
+                commentary = WorkbookExporter.CommentaryLines(outResult.Results),
+                analysis = outResult.Analysis,
+                // named on the analysis card, so the reader knows what wrote it
+                model_id = capturedJob.ModelId,
                 // stored with the run so the timing and file sizes survive a restart
                 // and a reopened run shows the same detail as a fresh one. Stages are
                 // deliberately not kept: they describe a run in flight, and the

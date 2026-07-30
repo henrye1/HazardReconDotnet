@@ -323,13 +323,21 @@
       <div class="wrap">
         <div class="stepgrid" id="tab-summary"></div>
 
-        <div class="hide" id="tab-dashboard">
-          <div class="card">
-            <div class="cardhead">
-              <span>Reconciliation dashboard</span>
-              <a id="res-open" href="#" target="_blank" rel="noopener" class="headlink">Open in a new tab<span
-                 class="ms-icon" style="font-size:16px">open_in_new</span></a>
-            </div>
+        <div class="hide dashgrid" id="tab-dashboard">
+          <div class="dashintro">
+            <p class="hint" style="margin:0">Migration matrix and engine results for the scoring window,
+              written from <code>reconciliation_dashboard.html</code>.</p>
+            <a id="res-open" href="#" target="_blank" rel="noopener" class="headlink">Open in a new tab<span
+               class="ms-icon" style="font-size:16px">open_in_new</span></a>
+          </div>
+
+          <div class="tiles" id="dash-tiles"></div>
+          <div id="dash-commentary"></div>
+          <div id="dash-ai"></div>
+
+          <!-- the engine's own rendering, until the native sections replace it -->
+          <div class="card" id="dash-embed">
+            <div class="cardhead"><span>Reconciliation dashboard</span></div>
             <div class="cardbody" style="display:grid;gap:12px">
               <p class="hint" style="margin:0">The full finance dashboard, with the interactive migration
                 matrix and engine results.</p>

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using HazardRecon.Core.Helpers;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
@@ -8,10 +9,13 @@ namespace HazardRecon.Web;
 public record LastBucketRow(string Bucket, int Accounts, double Share, string Amount);
 
 /// <summary>A default that could not be traced, for the detail table.</summary>
-public record UntracedRow(string Account, string CohortDate, string Rating, string Amount);
+public record UntracedRow(string Account,
+    [property: JsonPropertyName("cohort_date")] string CohortDate,
+    string Rating, string Amount);
 
 /// <summary>A write-off with no default flag, for the exceptions table.</summary>
-public record WoExceptionRow(string Account, string Amount, string Date, string Window, string LastBucket);
+public record WoExceptionRow(string Account, string Amount, string Date, string Window,
+    [property: JsonPropertyName("last_bucket")] string LastBucket);
 
 /// <summary>LGD by days since default, one row per event type.</summary>
 public record LgdRow(string Name, List<double?> Values);
@@ -36,6 +40,7 @@ public record DashboardSet
     public Dictionary<string, List<List<int>>> Migration { get; init; } = new();
 
     /// <summary>Movements per month, in the order the months are listed.</summary>
+    [JsonPropertyName("monthly_totals")]
     public List<int> MonthlyTotals { get; init; } = new();
 
     /// <summary>The model's own fitted transition probabilities, from scenario.json.</summary>
@@ -45,15 +50,24 @@ public record DashboardSet
     public List<LgdRow> Lgd { get; init; } = new();
 
     // the census, and the two check tables' remaining columns
+    [JsonPropertyName("scored_in_writeoff")]
     public int ScoredInWriteOff { get; init; }
+    [JsonPropertyName("scored_in_ifrs9")]
     public int? ScoredInIfrs9 { get; init; }
+    [JsonPropertyName("writeoff_distinct")]
     public int WriteOffDistinct { get; init; }
+    [JsonPropertyName("ifrs9_distinct")]
     public int Ifrs9Distinct { get; init; }
+    [JsonPropertyName("wo_pre_window")]
     public int WoPreWindow { get; init; }
+    [JsonPropertyName("default_pct_of_scored")]
     public double? DefaultPctOfScored { get; init; }
 
+    [JsonPropertyName("last_buckets")]
     public List<LastBucketRow> LastBuckets { get; init; } = new();
+    [JsonPropertyName("top_untraced")]
     public List<UntracedRow> TopUntraced { get; init; } = new();
+    [JsonPropertyName("wo_exceptions")]
     public List<WoExceptionRow> WoExceptions { get; init; } = new();
 }
 

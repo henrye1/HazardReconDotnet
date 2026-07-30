@@ -730,7 +730,7 @@ const DETAIL_RESULT = {
   sets: [{
     key: "JUN2026", label: "3. DEBUG FILE 30 JUNE 2026 3 MONTHS",
     window: "01 Dec 2025 to 30 Jun 2026", scored: 733828,
-    defaults: 15813, exposure_fmt: "R 40,101,222.00",
+    defaults: 15813, exposure: 40101222, exposure_fmt: "R 40,101,222.00",
     traced: 15440, trace_rate: 97.6, traced_writeoff: 15100, traced_ifrs9: 340,
     untraced: 373, untraced_fmt: "R 855,159.21",
     wo_total: 4, wo_in_window: 4, wo_in_window_fmt: "R 1.50", wo_post_window: 0,
@@ -874,6 +874,86 @@ const INVENTORY_FIX = {
   problems: [],
 };
 
+/* ---------------- DA: the dashboard's tiles, commentary and AI analysis ---------------- */
+async function scenarioDA() {
+  console.log("DA) dashboard tiles, commentary and the AI analysis expander");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.commentary = [
+    "VERDICT (JUN2026): exceptions found - see the detail below before sign-off.",
+    "JUN2026: 373 default account(s) could not be traced to the write-off or IFRS9 file (R 855,159.21 exposure).",
+    "JUN2026: Reconciliation validated - the rebuilt migration matrix matches the engine's CohortNlambda counts cell-for-cell.",
+  ];
+  res.analysis = [
+    "## Overview",
+    "The reconciliation is materially clean.",
+    "## Findings",
+    "A small tail of defaults did not trace.",
+    "- **Untraced tail** - 373 accounts, mostly small balances.",
+    "- plain bullet with no lead",
+  ].join("\n");
+  res.model_id = "gemini-2.5-pro";
+
+  h.ctx.showResults(res, []);
+  h.$get("#tab-btn-dashboard")._fire("click");
+
+  const tiles = h.$get("#dash-tiles").innerHTML;
+  check("five tiles", (tiles.match(/class="tile dash"/g) || []).length === 5,
+    `tiles=${(tiles.match(/class="tile dash"/g) || []).length}`);
+  check("the set count is shown", /Debug sets[\s\S]*?>1</.test(tiles));
+  check("the default rate is derived", /2\.15% default rate/.test(tiles),
+    "15813/733828 should read 2.15%");
+  check("exposure is formatted as rands", /R 40,101,222\.00 exposure/.test(tiles),
+    `tiles=${tiles.slice(0, 200)}`);
+  check("untraced is flagged", /class="num bad">373</.test(tiles));
+  check("in-window is flagged", /class="num bad">4</.test(tiles));
+
+  const com = h.$get("#dash-commentary").innerHTML;
+  check("the verdict heads the card", /VERDICT \(JUN2026\)/.test(com));
+  check("the pill reads from the verdict", /class="chip error">Exceptions found/.test(com));
+  check("the findings follow it", (com.match(/class="cline"/g) || []).length === 2);
+
+  const ai = h.$get("#dash-ai").innerHTML;
+  check("the first section shows", /Overview/.test(ai) && /materially clean/.test(ai));
+  check("later sections are held back", /id="ai-rest" class="hide"/.test(ai));
+  check("a lead-in bullet splits", /<b>Untraced tail<\/b>/.test(ai));
+  check("a plain bullet still renders", /plain bullet with no lead/.test(ai));
+  check("the model is named", /gemini-2\.5-pro · generated with the run/.test(ai));
+
+  h.$get("#btn-ai")._fire("click");
+  check("the expander opens", !h.$get("#ai-rest").classList.contains("hide"));
+  check("the expander relabels", /Show less/.test(h.$get("#ai-tx").textContent));
+}
+
+/* ---------------- DB: a clean run, and a run with no analysis ---------------- */
+async function scenarioDB() {
+  console.log("DB) a clean verdict, and a run with nothing from the model");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const clean = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  clean.sets[0].untraced = 0;
+  clean.sets[0].wo_in_window = 0;
+  clean.commentary = ["VERDICT (JUN2026): no exceptions - defaults, write-offs and the migration matrix all tie out."];
+  delete clean.analysis;
+
+  h.ctx.showResults(clean, []);
+  check("a clean verdict reads clean",
+    /class="chip done">No exceptions/.test(h.$get("#dash-commentary").innerHTML));
+  check("nothing is flagged red", !/class="num bad"/.test(h.$get("#dash-tiles").innerHTML));
+  check("no analysis means no card", h.$get("#dash-ai").innerHTML === "",
+    "an empty analysis should leave the section out entirely");
+
+  // a run with no commentary at all
+  delete clean.commentary;
+  h.ctx.showResults(clean, []);
+  check("no commentary means no card", h.$get("#dash-commentary").innerHTML === "");
+}
+
 /* ---------------- Y: one step at a time, and the rail goes back ---------------- */
 async function scenarioY() {
   console.log("Y) exactly one wizard step is on screen, and the rail walks back");
@@ -974,6 +1054,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioZ]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

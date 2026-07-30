@@ -961,6 +961,151 @@ function renderDashboardTab(res) {
   const url = outputUrl(res.dashboard);
   $("#res-frame").src = url;
   $("#res-open").href = url;
+
+  renderDashTiles(res);
+  renderDashCommentary(res);
+  renderDashAi(res);
+}
+
+/* The five figures the dashboard opens with, summed across sets. */
+function renderDashTiles(res) {
+  const sets = res.sets || [];
+  const sum = (f) => sets.reduce((n, s) => n + (f(s) || 0), 0);
+
+  const scored = sum(s => s.scored);
+  const defaults = sum(s => s.defaults);
+  const exposure = sum(s => s.exposure);
+  const untraced = sum(s => s.untraced);
+  const inWindow = sum(s => s.wo_in_window);
+  // one rate over the whole population reads better than an average of rates
+  const rate = scored > 0 ? (defaults / scored * 100).toFixed(2) + "% default rate" : "";
+
+  const tiles = [
+    ["Debug sets", fmt(sets.length), "portfolio slices", ""],
+    ["Scored accounts", fmt(scored), rate, ""],
+    ["Total defaults", fmt(defaults), money(exposure) + " exposure", ""],
+    ["Check 1 untraced", fmt(untraced), "defaults not in WO / IFRS9", untraced > 0 ? "bad" : ""],
+    ["Check 2 in-window", fmt(inWindow), "write-off without default flag", inWindow > 0 ? "bad" : ""],
+  ];
+
+  $("#dash-tiles").innerHTML = tiles.map(([label, value, sub, cls]) => `
+    <div class="tile dash">
+      <p class="lbl">${label}</p>
+      <span class="num ${cls}">${value}</span>
+      <span class="sub">${escapeHtml(sub)}</span>
+    </div>`).join("");
+}
+
+/* Rands, for the figures the server sends raw rather than pre-formatted. The
+   locale is pinned so this matches the server's own "R #,##0.00" - the same page
+   shows both, and on a machine with another locale they would disagree. */
+function money(v) {
+  const n = Number(v) || 0;
+  return "R " + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* The workbook's own opening sentences. The first is the verdict, so it heads the
+   card and decides the pill; the rest are the findings behind it. */
+function renderDashCommentary(res) {
+  const lines = (res.commentary || []).filter(Boolean);
+  if (!lines.length) { $("#dash-commentary").innerHTML = ""; return; }
+
+  const verdict = lines[0];
+  const clean = /no exceptions/i.test(verdict);
+
+  $("#dash-commentary").innerHTML = `
+    <div class="card accent">
+      <div class="cardbody" style="display:grid;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span class="ehead">Executive commentary</span>
+          <span class="chip ${clean ? "done" : "error"}">${clean ? "No exceptions" : "Exceptions found"}</span>
+        </div>
+        <p class="verdict">${escapeHtml(verdict)}</p>
+        ${lines.slice(1).map(l => `<p class="cline">${escapeHtml(l)}</p>`).join("")}
+      </div>
+    </div>`;
+}
+
+/* ---------- AI analysis ---------- */
+/* The model returns markdown. Only headings, paragraphs and bullets are used, which
+   is all the design shows, and the sections are what the expander works on. */
+function parseAnalysis(md) {
+  const sections = [];
+  let current = null;
+
+  String(md || "").split(/\r?\n/).forEach(raw => {
+    const line = raw.trim();
+    if (!line) return;
+
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    if (heading) {
+      current = { h: heading[1].replace(/[*_`]/g, "").trim(), paras: [], bullets: [] };
+      sections.push(current);
+      return;
+    }
+    if (!current) { current = { h: "", paras: [], bullets: [] }; sections.push(current); }
+
+    const bullet = line.match(/^[-*+]\s+(.*)$/);
+    if (bullet) {
+      const text = bullet[1];
+      // "**lead** - rest" renders as a lead-in with its explanation
+      const split = text.match(/^\*\*(.+?)\*\*\s*[-–—:]\s*(.*)$/);
+      current.bullets.push(split
+        ? { lead: split[1].trim(), text: split[2].trim() }
+        : { lead: "", text: text.replace(/\*\*/g, "") });
+      return;
+    }
+    current.paras.push(line.replace(/\*\*/g, ""));
+  });
+
+  return sections.filter(s => s.h || s.paras.length || s.bullets.length);
+}
+
+function analysisSection(sec) {
+  return `<div class="asec">` +
+    (sec.h ? `<span class="ah">${escapeHtml(sec.h)}</span>` : "") +
+    sec.paras.map(p => `<p class="ap">${escapeHtml(p)}</p>`).join("") +
+    sec.bullets.map(b => `<div class="abul"><span class="dot"></span>` +
+      `<p>${b.lead ? `<b>${escapeHtml(b.lead)}</b> &mdash; ` : ""}` +
+      `<span class="dim">${escapeHtml(b.text)}</span></p></div>`).join("") +
+    `</div>`;
+}
+
+let AI_OPEN = false;
+function renderDashAi(res) {
+  const sections = parseAnalysis(res.analysis);
+  if (!sections.length) { $("#dash-ai").innerHTML = ""; return; }
+
+  // the first section always shows; the rest are behind the expander
+  const rest = sections.slice(1);
+  const model = (res.model_id ? res.model_id + " · " : "") + "generated with the run";
+
+  $("#dash-ai").innerHTML = `
+    <div class="card">
+      <div class="cardhead">
+        <span class="ms-icon" style="font-size:20px">auto_awesome</span>AI analysis
+        <span class="sub" style="margin-left:auto">${escapeHtml(model)}</span>
+      </div>
+      <div class="cardbody" style="display:grid;gap:18px">
+        ${analysisSection(sections[0])}
+        ${rest.length ? `<div id="ai-rest" class="hide" style="display:grid;gap:18px">
+          ${rest.map(analysisSection).join("")}</div>` : ""}
+        ${rest.length ? `<button class="linkbtn" id="btn-ai" style="justify-self:start">
+          <span class="ms-icon" style="font-size:18px" id="ai-ic">expand_more</span>
+          <span id="ai-tx">Show the full analysis</span></button>` : ""}
+      </div>
+    </div>`;
+
+  if (!rest.length) return;
+  setAiOpen(false);
+  $("#btn-ai").addEventListener("click", () => setAiOpen(!AI_OPEN));
+}
+
+function setAiOpen(open) {
+  AI_OPEN = open;
+  $("#ai-rest").classList.toggle("hide", !open);
+  $("#ai-tx").textContent = open ? "Show less" : "Show the full analysis";
+  $("#ai-ic").textContent = open ? "expand_less" : "expand_more";
 }
 
 const outputUrl = (name) =>

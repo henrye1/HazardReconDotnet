@@ -26,6 +26,28 @@ public class DashboardPayloadTests : IClassFixture<SyntheticDataFixture>
     }
 
     [Fact]
+    public void TestTheWireNamesArePinned()
+    {
+        // the browser reads these keys; they are stated on the record rather than
+        // left to the host's naming policy, and the rest of the result is snake_case
+        string json = System.Text.Json.JsonSerializer.Serialize(Run("dash-wire")[0]);
+
+        foreach (string key in new[]
+        {
+            "monthly_totals", "scored_in_writeoff", "scored_in_ifrs9", "writeoff_distinct",
+            "ifrs9_distinct", "wo_pre_window", "default_pct_of_scored", "last_buckets",
+            "top_untraced", "wo_exceptions",
+        })
+        {
+            Assert.Contains("\"" + key + "\"", json);
+        }
+
+        // and the camelCase forms are absent, so nothing reads them by accident
+        Assert.DoesNotContain("\"monthlyTotals\"", json);
+        Assert.DoesNotContain("\"topUntraced\"", json);
+    }
+
+    [Fact]
     public void TestEverySetIsDescribed()
     {
         List<DashboardSet> sets = Run("dash-sets");
