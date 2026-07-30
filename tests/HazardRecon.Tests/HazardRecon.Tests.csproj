@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\HazardRecon.Core\HazardRecon.Core.csproj" />
+    <ProjectReference Include="..\..\src\HazardRecon.Web\HazardRecon.Web.csproj" />
   </ItemGroup>
 
 </Project>

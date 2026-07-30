@@ -5,12 +5,25 @@ using HazardRecon.Core.Llm;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
+using HazardRecon.Web.Supabase;
 
 var builder = WebApplication.CreateBuilder(args);
 
 string host = Environment.GetEnvironmentVariable("HOST") ?? "127.0.0.1";
 int port = int.TryParse(Environment.GetEnvironmentVariable("PORT"), out int p) ? p : 5000;
 builder.WebHost.UseUrls($"http://{host}:{port}");
+
+SupabaseOptions supabaseOptions = new();
+builder.Configuration.GetSection("Supabase").Bind(supabaseOptions);
+
+if (!supabaseOptions.IsConfigured)
+{
+    // Unlike the LLM, this is fatal. Without Supabase there is no login and no
+    // storage, so every request would 500 - fail loudly at boot instead.
+    Console.Error.WriteLine(
+        " ! Supabase is not configured. Missing: " + string.Join(", ", supabaseOptions.MissingKeys()));
+    return 1;
+}
 
 var app = builder.Build();
 app.UseDefaultFiles();
@@ -312,3 +325,4 @@ Console.WriteLine($" Open http://{host}:{port} in your browser (Ctrl+C here to s
 Console.WriteLine("==================================================================");
 
 app.Run();
+return 0;
