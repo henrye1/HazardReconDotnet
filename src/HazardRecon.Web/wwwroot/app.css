@@ -554,6 +554,13 @@ table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3
 .verdict{margin:0;font-size:14px;font-weight:600}
 .cline{margin:0;font-size:13.5px;color:var(--cl-off-text-color);text-wrap:pretty}
 
+/* a header whose subtitle sits beside the title and may wrap under it */
+.cardhead.wrapped{align-items:baseline;gap:10px;flex-wrap:wrap;justify-content:flex-start}
+/* whole-table tabular numerals, so every column compares down the page */
+table.grid.figures{font-variant-numeric:tabular-nums}
+table.grid td.nowrap{white-space:nowrap}
+table.grid td.bad{font-weight:700;color:var(--cl-error-color)}
+
 /* ---------- AI analysis ---------- */
 .asec{display:grid;gap:8px}
 .ah{font-size:14px;font-weight:700;color:var(--cl-primary-color)}

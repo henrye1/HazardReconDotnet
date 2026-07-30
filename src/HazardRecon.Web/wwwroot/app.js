@@ -965,6 +965,98 @@ function renderDashboardTab(res) {
   renderDashTiles(res);
   renderDashCommentary(res);
   renderDashAi(res);
+  renderDashChecks(res);
+}
+
+/* ---------- the two checks, and the population they ran over ---------- */
+/* One card per table: a header with its subtitle, then a row per set. Figures are
+   right-aligned on tabular numerals so the columns compare down the page. */
+function dashCard(target, title, subtitle, headers, rows) {
+  const head = headers.map(h =>
+    `<th class="${h.num ? "num" : ""}"${h.nowrap ? " style='white-space:nowrap'" : ""}>` +
+    `${escapeHtml(h.t)}</th>`).join("");
+
+  $(target).innerHTML = `
+    <div class="card">
+      <div class="cardhead wrapped">
+        <span>${escapeHtml(title)}</span>
+        <span class="sub">${escapeHtml(subtitle)}</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="grid tight figures">
+          <thead><tr>${head}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/* A cell, optionally right-aligned, flagged red, or kept on one line. */
+const dcell = (v, o) => {
+  const opt = o || {};
+  const cls = ["num", "bad", "nowrap"].filter(c =>
+    (c === "num" && opt.num) || (c === "bad" && opt.bad) || (c === "nowrap" && opt.nowrap));
+  return `<td class="${cls.join(" ")}">${v}</td>`;
+};
+
+const setKeyCell = (s) => `<td class="setkey">${escapeHtml(s.key)}</td>`;
+
+function renderDashChecks(res) {
+  const sets = res.sets || [];
+  const dash = res.dashboard_sets || [];
+  const extra = (key) => dash.find(d => d.key === key) || {};
+
+  dashCard("#dash-check1",
+    "Check 1 — are all our defaults accounted for?",
+    "lgd_defaults.csv (Bucket 0) → write-off & IFRS9 files",
+    [{ t: "Set" }, { t: "Defaults", num: true }, { t: "Exposure", num: true },
+     { t: "Traced", num: true }, { t: "WO traced", num: true }, { t: "IFRS9 traced", num: true },
+     { t: "Untraced", num: true }, { t: "Untraced exposure", num: true }, { t: "Trace rate", num: true }],
+    sets.map(s => "<tr>" + setKeyCell(s) +
+      dcell(fmt(s.defaults), { num: true }) +
+      dcell(escapeHtml(s.exposure_fmt || ""), { num: true, nowrap: true }) +
+      dcell(fmt(s.traced), { num: true }) +
+      dcell(fmt(s.traced_writeoff), { num: true }) +
+      dcell(fmt(s.traced_ifrs9), { num: true }) +
+      dcell(fmt(s.untraced), { num: true, bad: s.untraced > 0 }) +
+      dcell(escapeHtml(s.untraced_fmt || ""), { num: true, bad: s.untraced > 0, nowrap: true }) +
+      dcell(s.trace_rate + "%", { num: true }) + "</tr>").join(""));
+
+  dashCard("#dash-check2",
+    "Check 2 — did we miss any defaults?",
+    "write-off file → scored population without Bucket 0",
+    [{ t: "Set" }, { t: "Scoring window", nowrap: true }, { t: "Scored in WO", num: true },
+     { t: "WO not default", num: true }, { t: "In window", num: true },
+     { t: "In-window amount", num: true }, { t: "Pre-window", num: true }, { t: "Post-window", num: true }],
+    sets.map(s => "<tr>" + setKeyCell(s) +
+      dcell(escapeHtml(s.window || "n/a"), { nowrap: true }) +
+      dcell(fmt(extra(s.key).scored_in_writeoff), { num: true }) +
+      dcell(fmt(s.wo_total), { num: true }) +
+      dcell(fmt(s.wo_in_window), { num: true, bad: s.wo_in_window > 0 }) +
+      dcell(escapeHtml(s.wo_in_window_fmt || ""), { num: true, bad: s.wo_in_window > 0, nowrap: true }) +
+      dcell(fmt(extra(s.key).wo_pre_window), { num: true }) +
+      dcell(fmt(s.wo_post_window), { num: true }) + "</tr>").join(""));
+
+  dashCard("#dash-census",
+    "Distinct account census",
+    "cross-file population overlap",
+    [{ t: "Set" }, { t: "Scored", num: true }, { t: "Defaults", num: true },
+     { t: "Default %", num: true }, { t: "Write-off", num: true }, { t: "IFRS9", num: true },
+     { t: "Scored in WO", num: true }, { t: "Scored in IFRS9", num: true }],
+    sets.map(s => {
+      const d = extra(s.key);
+      // the engine reports the share as a fraction of the scored population
+      const pct = d.default_pct_of_scored == null
+        ? "&mdash;" : (d.default_pct_of_scored * 100).toFixed(2) + "%";
+      return "<tr>" + setKeyCell(s) +
+        dcell(fmt(s.scored), { num: true }) +
+        dcell(fmt(s.defaults), { num: true }) +
+        dcell(pct, { num: true }) +
+        dcell(fmt(d.writeoff_distinct), { num: true }) +
+        dcell(fmt(d.ifrs9_distinct), { num: true }) +
+        dcell(fmt(d.scored_in_writeoff), { num: true }) +
+        dcell(d.scored_in_ifrs9 == null ? "&mdash;" : fmt(d.scored_in_ifrs9), { num: true }) + "</tr>";
+    }).join(""));
 }
 
 /* The five figures the dashboard opens with, summed across sets. */

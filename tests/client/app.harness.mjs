@@ -928,6 +928,72 @@ async function scenarioDA() {
   check("the expander relabels", /Show less/.test(h.$get("#ai-tx").textContent));
 }
 
+/* ---------------- DC: the check and census tables ---------------- */
+const DASH_SET_FIX = {
+  key: "JUN2026", label: "3. DEBUG FILE 30 JUNE 2026 3 MONTHS",
+  scored_in_writeoff: 15073, scored_in_ifrs9: 3194,
+  writeoff_distinct: 150226, ifrs9_distinct: 176009,
+  wo_pre_window: 0, default_pct_of_scored: 0.0215,
+  months: [], migration: {}, monthly_totals: [], lgd: [],
+  last_buckets: [], top_untraced: [], wo_exceptions: [],
+};
+
+async function scenarioDC() {
+  console.log("DC) the check 1, check 2 and census tables");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.dashboard_sets = [JSON.parse(JSON.stringify(DASH_SET_FIX))];
+  h.ctx.showResults(res, []);
+
+  const c1 = h.$get("#dash-check1").innerHTML;
+  check("check 1 is titled", /are all our defaults accounted for/.test(c1));
+  check("check 1 names its inputs", /lgd_defaults\.csv \(Bucket 0\)/.test(c1));
+  check("check 1 has nine columns", (c1.match(/<th[ >]/g) || []).length === 9,
+    `cols=${(c1.match(/<th[ >]/g) || []).length}`);
+  check("untraced is flagged in check 1", /class="num bad">373</.test(c1));
+  check("the trace rate is shown", /97\.6%/.test(c1));
+
+  const c2 = h.$get("#dash-check2").innerHTML;
+  check("check 2 is titled", /did we miss any defaults/.test(c2));
+  check("check 2 has eight columns", (c2.match(/<th[ >]/g) || []).length === 8,
+    `cols=${(c2.match(/<th[ >]/g) || []).length}`);
+  check("the scoring window is shown", /01 Dec 2025 to 30 Jun 2026/.test(c2));
+  check("scored-in-WO comes from the dashboard payload", /15,073/.test(c2));
+  check("pre-window comes through", (c2.match(/>0</g) || []).length >= 2);
+
+  const cen = h.$get("#dash-census").innerHTML;
+  check("the census is titled", /Distinct account census/.test(cen));
+  check("the census has eight columns", (cen.match(/<th[ >]/g) || []).length === 8,
+    `cols=${(cen.match(/<th[ >]/g) || []).length}`);
+  check("the default share is a percentage of scored", /2\.15%/.test(cen),
+    "0.0215 should render as 2.15%");
+  check("the write-off population is shown", /150,226/.test(cen));
+  check("the IFRS9 population is shown", /176,009/.test(cen));
+}
+
+/* ---------------- DD: a set the dashboard payload knows nothing about ---------------- */
+async function scenarioDD() {
+  console.log("DD) a set with no dashboard payload still renders its rows");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  // an older stored run, or a set whose scored file was missing
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  delete res.dashboard_sets;
+  h.ctx.showResults(res, []);
+
+  check("check 1 still renders", /15,813/.test(h.$get("#dash-check1").innerHTML));
+  check("check 2 still renders", /01 Dec 2025/.test(h.$get("#dash-check2").innerHTML));
+  check("the census still renders", /733,828/.test(h.$get("#dash-census").innerHTML));
+  check("missing figures read as dashes, not undefined",
+    !/undefined|NaN/.test(h.$get("#dash-census").innerHTML),
+    `census=${h.$get("#dash-census").innerHTML.slice(0, 200)}`);
+}
+
 /* ---------------- DB: a clean run, and a run with no analysis ---------------- */
 async function scenarioDB() {
   console.log("DB) a clean verdict, and a run with nothing from the model");
@@ -1054,6 +1120,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
