@@ -2,10 +2,14 @@ services:
   - type: web
     name: hazard-recon
     runtime: docker
+    dockerfilePath: ./Dockerfile
     plan: starter
     # The in-process job cache assumes exactly one instance. See
     # docs/superpowers/specs/2026-07-30-supabase-auth-and-run-persistence-design.md
     numInstances: 1
+    # Unauthenticated and cheap, so Render can gate a deploy on the app actually
+    # answering rather than on the container merely starting.
+    healthCheckPath: /health
     envVars:
       - key: PORT
         value: 10000

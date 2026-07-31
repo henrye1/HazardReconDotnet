@@ -1,0 +1,28 @@
+# Keep the build context to what the image actually needs. Excluding bin/obj
+# matters for more than size: a host Debug build copied over the container's
+# output would be the wrong runtime identifier, and it busts the restore cache
+# on every source edit.
+**/bin/
+**/obj/
+**/.vs/
+**/node_modules/
+
+.git/
+.gitignore
+.claude/
+.superpowers/
+
+# not part of the web image: a local CLI, the test suite, and the notes
+src/HazardRecon.Cli/
+tests/
+docs/
+supabase/
+*.md
+HazardRecon.slnx
+render.yaml
+Dockerfile
+.dockerignore
+
+# never bake secrets into an image
+**/appsettings.Development.json
+**/secrets.json

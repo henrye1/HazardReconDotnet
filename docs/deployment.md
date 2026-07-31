@@ -3,6 +3,36 @@
 The web app is multi-user and requires a Supabase project. The CLI is unaffected
 by everything here — it stays a local tool with no authentication.
 
+## The image
+
+`render.yaml` sets `runtime: docker`, so Render builds the root `Dockerfile`.
+It is a two-stage build: the SDK image restores and publishes, and only the
+published output is copied into the smaller ASP.NET runtime image.
+
+Three things about it are deliberate:
+
+- **Only the web app and the engine are built.** The CLI is a local tool and the
+  test project is not needed at runtime, so `.dockerignore` keeps both out of the
+  build context along with `bin/`, `obj/`, `docs/` and `supabase/`. Excluding
+  `bin/` is not only about size: a host Debug build copied over the container's
+  output would be the wrong runtime, and its presence busts the restore cache on
+  every source edit.
+- **It runs as the image's non-root user.** A run writes under `/app/runs` before
+  the artifacts reach object storage, so that directory is created and handed to
+  that user *before* the `USER` switch. Without it the first run fails on a
+  path it cannot write.
+- **`appsettings.Development.json` is excluded.** `dotnet publish` copies it by
+  default. It holds only logging levels today, but an image is the wrong place
+  for anything environment-specific to arrive by accident.
+
+The app binds whatever `HOST` and `PORT` Render supplies rather than hard-coding a
+URL, which is why `EXPOSE` is documentation only.
+
+## Health check
+
+`healthCheckPath: /health` is declared, so Render gates a deploy on the app
+answering rather than on the container merely starting.
+
 ## Environment variables
 
 Render supplies all five as environment variables. `render.yaml` marks the
@@ -52,6 +82,29 @@ live runs as `interrupted`.
 
 Nothing in the code can detect this, which is why the startup banner states the
 assumption and `render.yaml` pins `numInstances: 1`.
+
+## Disk, and the upload limit
+
+Render's filesystem is ephemeral, which the app already assumes: a download whose
+file is not on disk is served from object storage instead
+(`GET /runs/{rid}/output/{filename}` falls through to a signed URL). A redeploy
+therefore loses no artifact. It does abandon any run in flight — those rows are
+marked `interrupted` on the next startup.
+
+What ephemeral disk does constrain is uploading. `ReadFormAsync` buffers the whole
+request before `UploadReceiver` streams it into the run folder, so a folder needs
+roughly **twice its size** in scratch space while it lands.
+
+`Uploads:MaxBytesPerSet` defaults to 512 MB, and with four sets that makes
+Kestrel's ceiling about 2 GB. That is a cap, not a reservation — a real debug
+folder is nearer 160 MB, so a four-set run needs about 1.3 GB of scratch rather
+than 4 GB. Still, if deploys start failing on disk during upload, lower it:
+
+    Uploads__MaxBytesPerSet=134217728    # 128 MB per set
+
+The browser reads that limit from `/api/config` rather than hard-coding its own,
+so the folder picker enforces whatever the server is configured with and no client
+change is needed.
 
 ## Before the first deploy
 
