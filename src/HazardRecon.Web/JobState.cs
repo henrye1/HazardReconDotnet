@@ -2,6 +2,9 @@ using HazardRecon.Core.Models;
 
 namespace HazardRecon.Web;
 
+/// <summary>One line the engine logged, with the real timestamp public.logs needs.</summary>
+internal record JobLogEntry(DateTimeOffset OccurredAt, string Message, string Kind);
+
 internal class JobState
 {
     public string Id { get; set; } = string.Empty;
@@ -13,7 +16,7 @@ internal class JobState
     public List<string> Roots { get; set; } = new();
     public string Outdir { get; set; } = string.Empty;
     public string Indir { get; set; } = string.Empty;
-    public List<Dictionary<string, string>> Log { get; set; } = new();
+    public List<JobLogEntry> Log { get; set; } = new();
     public object? Result { get; set; }
     public string? Error { get; set; }
     public string Started { get; set; } = string.Empty;

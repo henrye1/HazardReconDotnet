@@ -485,7 +485,7 @@ public class DashboardRenderer
         string html = RenderDashboard(results, analysisMd);
         File.WriteAllText(path, html, Encoding.UTF8);
 
-        log?.Invoke($"dashboard written: {filename}", "ok");
+        log?.Invoke($"dashboard written: {filename}", LogKind.Ok);
         return filename;
     }
 

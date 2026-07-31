@@ -44,13 +44,20 @@ public class FakeRunStore : IRunStore
     public List<RunRecord> Runs { get; } = new();
     public int RecentCount { get; set; }
 
+    /// <summary>What the last SaveCompletionAsync call was handed, for assertions.</summary>
+    public List<RunSetResultRecord> SavedSetResults { get; } = new();
+    public List<LogEntryRecord> SavedLog { get; } = new();
+    public List<RunOutputFileRecord> SavedOutputFiles { get; } = new();
+    public List<RunCommentaryLineRecord> SavedCommentaryLines { get; } = new();
+    public RunResultsRecord? SavedRunResults { get; private set; }
+
     public Task<RunRecord> CreateAsync(Guid userId, IReadOnlyList<string> setLabels, CancellationToken ct = default)
     {
         RunRecord run = new()
         {
             Id = Guid.NewGuid(),
             UserId = userId,
-            Status = "ready",
+            StatusId = RunStatus.IdOf(RunStatus.Ready),
             SetLabels = setLabels.ToList(),
             CreatedAt = DateTimeOffset.UtcNow
         };
@@ -68,7 +75,7 @@ public class FakeRunStore : IRunStore
     public Task UpdateStatusAsync(Guid runId, string status, string? error, CancellationToken ct = default)
     {
         RunRecord? run = Runs.FirstOrDefault(r => r.Id == runId);
-        if (run != null) { run.Status = status; run.Error = error; }
+        if (run != null) { run.StatusId = RunStatus.IdOf(status); run.Error = error; }
         return Task.CompletedTask;
     }
 
@@ -79,16 +86,41 @@ public class FakeRunStore : IRunStore
         return Task.CompletedTask;
     }
 
-    public Task SaveCompletionAsync(Guid runId, string status, string? error, object? result,
-        object? analysisPayload, object log, CancellationToken ct = default)
+    public Task SaveCompletionAsync(
+        Guid runId,
+        Guid userId,
+        string status,
+        string? error,
+        RunResultsRecord runResults,
+        IReadOnlyList<RunSetResultRecord> setResults,
+        IReadOnlyList<LogEntryRecord> log,
+        IReadOnlyList<RunOutputFileRecord> outputFiles,
+        IReadOnlyList<RunCommentaryLineRecord> commentaryLines,
+        CancellationToken ct = default)
     {
         RunRecord? run = Runs.FirstOrDefault(r => r.Id == runId);
         if (run != null)
         {
-            run.Status = status;
+            run.StatusId = RunStatus.IdOf(status);
             run.Error = error;
             run.FinishedAt = DateTimeOffset.UtcNow;
+            run.Results = runResults;
+            run.RunSetResults = setResults.ToList();
+            run.Logs = log.ToList();
+            run.OutputFiles = outputFiles.ToList();
+            run.CommentaryLines = commentaryLines.ToList();
         }
+
+        SavedRunResults = runResults;
+        SavedSetResults.Clear();
+        SavedSetResults.AddRange(setResults);
+        SavedLog.Clear();
+        SavedLog.AddRange(log);
+        SavedOutputFiles.Clear();
+        SavedOutputFiles.AddRange(outputFiles);
+        SavedCommentaryLines.Clear();
+        SavedCommentaryLines.AddRange(commentaryLines);
+
         return Task.CompletedTask;
     }
 
@@ -97,8 +129,9 @@ public class FakeRunStore : IRunStore
 
     public Task<int> MarkRunningAsInterruptedAsync(CancellationToken ct = default)
     {
-        int n = Runs.Count(r => r.Status == "running");
-        Runs.Where(r => r.Status == "running").ToList().ForEach(r => r.Status = "interrupted");
+        int n = Runs.Count(r => r.Status == RunStatus.Running);
+        Runs.Where(r => r.Status == RunStatus.Running).ToList()
+            .ForEach(r => r.StatusId = RunStatus.IdOf(RunStatus.Interrupted));
         return Task.FromResult(n);
     }
 

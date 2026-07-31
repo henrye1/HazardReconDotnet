@@ -23,7 +23,7 @@ public class MigrationMatrixBuilder
 
         if (string.IsNullOrEmpty(pdScoredPath) || !File.Exists(pdScoredPath))
         {
-            log?.Invoke("pd_scored.csv missing - migrations and check 2 limited", "warn");
+            log?.Invoke("pd_scored.csv missing - migrations and check 2 limited", LogKind.Warn);
             return result;
         }
 
@@ -68,7 +68,7 @@ public class MigrationMatrixBuilder
         }
 
         result.ScoredDistinct = result.ScoredAccts.Count;
-        log?.Invoke($"migrations: {result.RowsInRange:N0}/{result.RowsTotal:N0} rows in range; {result.ScoredDistinct:N0} distinct scored accounts", "ok");
+        log?.Invoke($"migrations: {result.RowsInRange:N0}/{result.RowsTotal:N0} rows in range; {result.ScoredDistinct:N0} distinct scored accounts", LogKind.Ok);
 
         return result;
     }

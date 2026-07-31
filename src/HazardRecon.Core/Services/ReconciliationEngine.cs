@@ -74,7 +74,7 @@ public class ReconciliationEngine
             TraceRate = full.Count > 0 ? (double)traced.Count / full.Count : 0.0
         };
 
-        log?.Invoke($"CHECK 1: {summary.TracedTotal:N0} traced / {summary.UntracedTotal:N0} UNTRACED ({summary.TraceRate * 100:F1}% traced)", "ok");
+        log?.Invoke($"CHECK 1: {summary.TracedTotal:N0} traced / {summary.UntracedTotal:N0} UNTRACED ({summary.TraceRate * 100:F1}% traced)", LogKind.Ok);
         return (full, untraced, summary);
     }
 
@@ -89,7 +89,7 @@ public class ReconciliationEngine
         ReconciliationSummary summary = new();
         if (woAgg.Count == 0 || scoredAccts.Count == 0)
         {
-            log?.Invoke("CHECK 2 skipped (no write-off file or no scored population)", "warn");
+            log?.Invoke("CHECK 2 skipped (no write-off file or no scored population)", LogKind.Warn);
             return (new List<WriteOffNotDefaultRecord>(), summary);
         }
 
@@ -155,7 +155,7 @@ public class ReconciliationEngine
         summary.WoPostWindow = records.Count(r => r.WriteOffVsScoringWindow == "POST-WINDOW");
         summary.ScoredInWriteOff = scoredAccts.Count(woAcctSet.Contains);
 
-        log?.Invoke($"CHECK 2: {summary.WoNotDefaultTotal:N0} written off but never defaulted; {summary.WoInWindow:N0} IN WINDOW ({AccountUtils.Money(summary.WoInWindowAmount)})", "ok");
+        log?.Invoke($"CHECK 2: {summary.WoNotDefaultTotal:N0} written off but never defaulted; {summary.WoInWindow:N0} IN WINDOW ({AccountUtils.Money(summary.WoInWindowAmount)})", LogKind.Ok);
         return (records, summary);
     }
 
@@ -167,7 +167,10 @@ public class ReconciliationEngine
             if (logger != null) logger(msg, kind);
             else
             {
-                string mark = kind switch { "tool" => "→", "ok" => "✓", "warn" => "!", "head" => "■", _ => " " };
+                string mark = kind switch
+                {
+                    LogKind.Tool => "→", LogKind.Ok => "✓", LogKind.Warn => "!", LogKind.Head => "■", _ => " "
+                };
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {mark} {msg}");
             }
         };
@@ -176,7 +179,7 @@ public class ReconciliationEngine
         // so the stage calls below need no null checks
         stages ??= new StageReporter();
 
-        log("Hazard-rate reconciliation starting", "head");
+        log("Hazard-rate reconciliation starting", LogKind.Head);
 
         stages.Plan((StageKeys.Discover, "Read the analysis folders", "Find the write-off, defaults, scored and IFRS9 files in each folder"));
         stages.Begin(StageKeys.Discover);
@@ -224,7 +227,7 @@ public class ReconciliationEngine
 
         foreach (var (key, setInfo) in inv.Sets)
         {
-            log($"===== {key}  ({setInfo.Label}) =====", "head");
+            log($"===== {key}  ({setInfo.Label}) =====", LogKind.Head);
 
             var (woAgg, woAccts, engine, defaults, ifrs9Res) = stages.Track(StageKeys.Load(key), () =>
             {
@@ -250,7 +253,7 @@ public class ReconciliationEngine
             }
             else
             {
-                log("pd_scored.csv missing - migrations and check 2 limited", "warn");
+                log("pd_scored.csv missing - migrations and check 2 limited", LogKind.Warn);
                 mig = new MigrationMatrixResult();
                 // nothing to build, and check 2 will be partial - say so rather than
                 // leaving a row that looks like it succeeded
@@ -281,7 +284,7 @@ public class ReconciliationEngine
 
             if (val.Status != "N/A")
             {
-                log($"validation: rebuilt migration matrix vs debug.json CohortNlambda = {val.Status} (max cell diff {val.MaxAbsDiff})", val.Status == "PASS" ? "ok" : "warn");
+                log($"validation: rebuilt migration matrix vs debug.json CohortNlambda = {val.Status} (max cell diff {val.MaxAbsDiff})", val.Status == "PASS" ? LogKind.Ok : LogKind.Warn);
             }
 
             // a failed comparison is a finding, not a crash - the row says so
@@ -338,7 +341,7 @@ public class ReconciliationEngine
                 Engine = engine
             };
 
-            log($"{key} complete: {summary.UntracedTotal:N0} untraced defaults, {summary.WoInWindow:N0} in-window write-offs never defaulted", "ok");
+            log($"{key} complete: {summary.UntracedTotal:N0} untraced defaults, {summary.WoInWindow:N0} in-window write-offs never defaulted", LogKind.Ok);
         }
 
         string xlsx = stages.Track(StageKeys.Workbook, () => WorkbookExporter.ExportWorkbook(outdir, results, log));
@@ -348,12 +351,12 @@ public class ReconciliationEngine
         {
             if (analyst == null)
             {
-                log("no model selected - skipping AI analysis", "warn");
+                log("no model selected - skipping AI analysis", LogKind.Warn);
                 stages.End(StageKeys.Analysis, StageStatus.Skipped);
             }
             else
             {
-                log("Generating AI analysis", "head");
+                log("Generating AI analysis", LogKind.Head);
                 analysisMd = stages.Track(StageKeys.Analysis, () =>
                 {
                     var payload = AiAnalysisService.BuildAnalysisPayload(results);
@@ -370,10 +373,10 @@ public class ReconciliationEngine
         {
             memo = stages.Track(StageKeys.Memo, () =>
                 DocxExporter.WriteMemo(analysisMd, outdir, DateTime.Today.ToString("yyyy-MM-dd"), results.Values.Select(r => r.Summary.Label).ToList()));
-            log($"analysis memo written: {memo}", "ok");
+            log($"analysis memo written: {memo}", LogKind.Ok);
         }
 
-        log("Reconciliation complete", "head");
+        log("Reconciliation complete", LogKind.Head);
 
         // anything planned but never reached is marked skipped rather than left pending
         stages.Settle(StageStatus.Done);
