@@ -96,7 +96,17 @@ var app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+
+// The front end is three unversioned files, so a browser holding an old app.js
+// against a new server is a real failure mode - it presents as an exception from
+// a line number that no longer exists. "no-cache" still caches; it requires
+// revalidation, so a reload gets a 304 when nothing changed and the new file the
+// moment it did. At this size the round trip costs nothing next to the confusion.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+        ctx.Context.Response.Headers.CacheControl = "no-cache, must-revalidate"
+});
 
 CyteLlmOptions llmOptions = new();
 builder.Configuration.GetSection("CyteLlm").Bind(llmOptions);
