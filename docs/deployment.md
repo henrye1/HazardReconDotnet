@@ -33,6 +33,41 @@ URL, which is why `EXPOSE` is documentation only.
 `healthCheckPath: /health` is declared, so Render gates a deploy on the app
 answering rather than on the container merely starting.
 
+### Two startup warnings that are expected
+
+The container logs both of these on every boot. Neither is a problem *for this
+app*, and the reason matters if the app ever grows:
+
+    Storing keys in a directory '/home/app/.aspnet/DataProtection-Keys'
+    that may not be persisted outside of the container.
+
+Nothing here uses Data Protection. Authentication is JWT bearer, and the
+`/runs`-scoped download cookie carries the Supabase token itself, validated
+against the JWKS — there is no antiforgery, no cookie authentication and no
+session state. The key ring is created by the framework and never read.
+
+That changes the moment anything Data-Protection-backed is added — antiforgery
+tokens, `TempData`, cookie auth. Those would break on every redeploy, silently,
+because the keys are regenerated. Persist the key ring before adding any of them.
+
+    Overriding HTTP_PORTS '8080' ... Binding to values defined by URLS
+    instead 'http://0.0.0.0:10000'
+
+Expected, and confirmation that `HOST`/`PORT` are being honoured: the base image
+defaults to 8080 and the app's own `UseUrls` wins.
+
+## Verified locally
+
+The image has been built and run end to end (`docker build -t hazard-recon:local .`):
+
+- 355 MB, runs as the base image's non-root `app` user (uid 1654)
+- `/app/runs` exists and is writable by that user
+- `appsettings.Development.json` is absent; no CLI or test assemblies are present
+- with no Supabase configuration it refuses to start, exit 1, naming the missing keys
+- with configuration it serves `/health`, `/api/config`, `/` and `/app.js`
+- `/api/config` does not contain the service-role key
+- `/api/runs` and `/api/discover` both answer 401 unauthenticated
+
 ## Environment variables
 
 Render supplies all five as environment variables. `render.yaml` marks the
