@@ -1187,6 +1187,17 @@ async function scenarioDG() {
     /100\.0%/.test(sd));
   check("the write-off exceptions are shown", /1251622562/.test(sd) &&
     /class="chip error">In window/.test(sd));
+
+  // A stored run once arrived with PascalCase keys, because the store and the
+  // response used different serialisers. That is fixed server-side, but one
+  // missing figure must not be able to take the whole dashboard down again.
+  const odd = JSON.parse(JSON.stringify(res));
+  odd.dashboard_sets[0].last_buckets = [{ bucket: "Bucket 6", accounts: 4, amount: "R 1.50" }];
+  let threw = null;
+  try { h.ctx.showResults(odd, []); } catch (e) { threw = e.message; }
+  check("a row with no share renders instead of throwing", threw === null, `threw: ${threw}`);
+  check("the missing share reads as a dash",
+    /&mdash;/.test(h.$get("#dash-setdetail").innerHTML));
 }
 
 /* ---------------- DH: a run whose scenario had no matrices ---------------- */

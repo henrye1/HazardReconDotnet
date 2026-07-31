@@ -1088,6 +1088,12 @@ function renderLgd(d) {
     </table>`;
 }
 
+/* A share to one place. Reads a dash rather than throwing when the figure is
+   absent: one missing number used to take the whole dashboard down with it. */
+function pct1(v) {
+  return typeof v === "number" && isFinite(v) ? v.toFixed(1) + "%" : "&mdash;";
+}
+
 /* ---------- per-set detail ---------- */
 function renderSetDetail(res) {
   const dash = res.dashboard_sets || [];
@@ -1103,7 +1109,7 @@ function renderSetDetail(res) {
     const buckets = (d.last_buckets || []).map(b => `<tr>
       <td>${escapeHtml(b.bucket)}</td>
       <td class="num">${fmt(b.accounts)}</td>
-      <td class="num">${b.share.toFixed(1)}%</td>
+      <td class="num">${pct1(b.share)}</td>
       <td class="num">${escapeHtml(b.amount)}</td></tr>`).join("");
 
     const exceptions = (d.wo_exceptions || []).map(w => `<tr>
