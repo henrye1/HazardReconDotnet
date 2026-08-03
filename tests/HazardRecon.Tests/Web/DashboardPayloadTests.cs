@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
@@ -23,6 +25,44 @@ public class DashboardPayloadTests : IClassFixture<SyntheticDataFixture>
             logger: (_, _) => { }, analyze: false, analyst: null);
 
         return result.Results.Select(kv => DashboardPayload.Build(kv.Key, kv.Value)).ToList();
+    }
+
+    [Fact]
+    public void TestBothSerialisersProduceIdenticalNames()
+    {
+        // The bug this pins: a run is serialised twice by different code. The live
+        // poll goes out through the host's response serialiser, which is camelCase,
+        // while SupabaseRunStore writes the stored copy with default options, which
+        // is PascalCase. Any property whose name was left to the policy therefore
+        // arrived as "share" from one path and "Share" from the other, and the
+        // browser - reading one spelling - crashed on the other.
+        DashboardSet set = Run("dash-both")[0];
+
+        string stored = System.Text.Json.JsonSerializer.Serialize(set);
+        string live = System.Text.Json.JsonSerializer.Serialize(set,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Equal(stored, live);
+    }
+
+    [Fact]
+    public void TestNoNameIsLeftToTheNamingPolicy()
+    {
+        // every property, at every level, states its own wire name
+        foreach (Type t in new[]
+        {
+            typeof(DashboardSet), typeof(LastBucketRow),
+            typeof(UntracedRow), typeof(WoExceptionRow), typeof(LgdRow),
+        })
+        {
+            foreach (var prop in t.GetProperties())
+            {
+                Assert.True(
+                    prop.GetCustomAttributes(typeof(JsonPropertyNameAttribute), true).Length == 1,
+                    $"{t.Name}.{prop.Name} has no [JsonPropertyName]; its spelling would " +
+                    "then depend on which serialiser wrote it");
+            }
+        }
     }
 
     [Fact]

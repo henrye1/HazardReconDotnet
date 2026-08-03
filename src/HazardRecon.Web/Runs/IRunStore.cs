@@ -18,17 +18,23 @@ public interface IRunStore
     Task SetModelAsync(Guid runId, string? modelId, CancellationToken ct = default);
 
     /// <summary>
-    /// Writes the finished run in one call: status, log, summaries and the chat
-    /// payload. Done once at the end rather than per log line, which would cost a
-    /// round trip for every message the engine emits.
+    /// Writes the finished run in one call: status, log, per-set results and
+    /// their dashboard/analysis detail, output files and commentary. Calls a
+    /// Postgres function rather than patching several tables in sequence,
+    /// because those writes must replace a run's prior completion data
+    /// atomically - a run's id can be reused on re-run, and a PostgREST call
+    /// per table would not be.
     /// </summary>
     Task SaveCompletionAsync(
         Guid runId,
+        Guid userId,
         string status,
         string? error,
-        object? result,
-        object? analysisPayload,
-        object log,
+        RunResultsRecord runResults,
+        IReadOnlyList<RunSetResultRecord> setResults,
+        IReadOnlyList<LogEntryRecord> log,
+        IReadOnlyList<RunOutputFileRecord> outputFiles,
+        IReadOnlyList<RunCommentaryLineRecord> commentaryLines,
         CancellationToken ct = default);
 
     Task<int> CountSinceAsync(Guid userId, DateTimeOffset since, CancellationToken ct = default);

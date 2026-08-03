@@ -45,7 +45,14 @@ builder.Services
         options.ConfigurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
             $"{SupabaseJwt.Issuer(supabaseOptions)}/.well-known/jwks.json",
             new JwksRetriever(),
-            new HttpDocumentRetriever());
+            new HttpDocumentRetriever
+            {
+                // Fetching the (public) signing keys over plain HTTP is only ever true
+                // for a local Supabase instance during development - production is
+                // always https. This does not weaken token validation itself: the JWT's
+                // signature, issuer and audience are still checked in full.
+                RequireHttps = supabaseOptions.BaseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            });
 
         options.Events = new JwtBearerEvents
         {
@@ -96,7 +103,17 @@ var app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+
+// The front end is three unversioned files, so a browser holding an old app.js
+// against a new server is a real failure mode - it presents as an exception from
+// a line number that no longer exists. "no-cache" still caches; it requires
+// revalidation, so a reload gets a 304 when nothing changed and the new file the
+// moment it did. At this size the round trip costs nothing next to the confusion.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+        ctx.Context.Response.Headers.CacheControl = "no-cache, must-revalidate"
+});
 
 CyteLlmOptions llmOptions = new();
 builder.Configuration.GetSection("CyteLlm").Bind(llmOptions);
@@ -305,17 +322,19 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
     job.FinishedAt = null;
 
     void Logger(string msg, string kind) =>
-        job.Log.Add(new Dictionary<string, string>
-        {
-            ["t"] = DateTime.Now.ToString("HH:mm:ss"),
-            ["msg"] = msg,
-            ["kind"] = kind
-        });
+        job.Log.Add(new JobLogEntry(DateTimeOffset.UtcNow, msg, kind));
 
     var capturedJob = job;
     StageReporter stages = new(list => capturedJob.Stages = list);
     _ = Task.Run(async () =>
     {
+        // populated on success only; an error leaves the run with no set
+        // results/output files, same as the old design leaving result null
+        List<RunSetResultRecord> setResults = new();
+        List<RunOutputFileRecord> outputFileRecords = new();
+        List<RunCommentaryLineRecord> commentaryRecords = new();
+        RunResultsRecord runResultsRow = new() { RunId = runGuid };
+
         try
         {
             var engine = new ReconciliationEngine();
@@ -338,7 +357,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
             }
             catch (Exception payloadEx)
             {
-                Logger($"Could not build chat payload: {payloadEx.GetType().Name}: {payloadEx.Message}", "warn");
+                Logger($"Could not build chat payload: {payloadEx.GetType().Name}: {payloadEx.Message}", LogKind.Warn);
             }
 
             var setSummaries = outResult.Results.Select(kv => new
@@ -398,6 +417,24 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
             };
             capturedJob.Status = "done";
 
+            // the rows public.runs' completion RPC actually persists
+            setResults = outResult.Results
+                .Select(kv => RunSetResultMapper.Build(runGuid, capturedJob.UserId, kv.Key, kv.Value))
+                .ToList();
+            outputFileRecords = RunSetResultMapper.BuildOutputFiles(runGuid, capturedJob.UserId, capturedJob.Outdir, outResult);
+            commentaryRecords = WorkbookExporter.CommentaryLines(outResult.Results)
+                .Select((line, i) => new RunCommentaryLineRecord
+                    { RunId = runGuid, UserId = capturedJob.UserId, Line = line, Position = i })
+                .ToList();
+            runResultsRow = new RunResultsRecord
+            {
+                RunId = runGuid,
+                WorkbookFilename = outResult.Workbook,
+                DashboardFilename = outResult.Dashboard,
+                MemoFilename = outResult.Memo,
+                AnalysisMarkdown = outResult.Analysis
+            };
+
             // Same isolation as the chat payload above: the run is finished and
             // its artifacts are on disk. A storage or database failure here is
             // reported, never allowed to downgrade a completed run to an error.
@@ -407,18 +444,18 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                     capturedJob.UserId, runGuid, "output", capturedJob.Outdir);
 
                 if (stored.Failed.Count > 0)
-                    Logger($"Could not store {stored.Failed.Count} artifact(s): {string.Join(", ", stored.Failed)}", "warn");
+                    Logger($"Could not store {stored.Failed.Count} artifact(s): {string.Join(", ", stored.Failed)}", LogKind.Warn);
             }
             catch (Exception storeEx)
             {
-                Logger($"Could not store artifacts: {storeEx.GetType().Name}: {storeEx.Message}", "warn");
+                Logger($"Could not store artifacts: {storeEx.GetType().Name}: {storeEx.Message}", LogKind.Warn);
             }
         }
         catch (Exception ex)
         {
             capturedJob.Error = $"{ex.GetType().Name}: {ex.Message}";
             capturedJob.Status = "error";
-            Logger(capturedJob.Error, "warn");
+            Logger(capturedJob.Error, LogKind.Warn);
             // otherwise the progress screen keeps a row spinning on a dead run
             stages.Settle(StageStatus.Error);
         }
@@ -426,15 +463,25 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
         // already set when the engine returned; this covers the failure path
         capturedJob.FinishedAt ??= DateTimeOffset.UtcNow;
 
+        List<LogEntryRecord> logRecords = capturedJob.Log.Select((l, i) => new LogEntryRecord
+        {
+            RunId = runGuid,
+            UserId = capturedJob.UserId,
+            Seq = i + 1,
+            OccurredAt = l.OccurredAt,
+            TypeId = LogTypeLookup.IdOf(l.Kind),
+            Message = l.Message
+        }).ToList();
+
         try
         {
             await runStore.SaveCompletionAsync(
-                runGuid, capturedJob.Status, capturedJob.Error,
-                capturedJob.Result, capturedJob.AnalysisPayload, capturedJob.Log);
+                runGuid, capturedJob.UserId, capturedJob.Status, capturedJob.Error,
+                runResultsRow, setResults, logRecords, outputFileRecords, commentaryRecords);
         }
         catch (Exception saveEx)
         {
-            Logger($"Could not save the run: {saveEx.GetType().Name}: {saveEx.Message}", "warn");
+            Logger($"Could not save the run: {saveEx.GetType().Name}: {saveEx.Message}", LogKind.Warn);
         }
     });
 
@@ -455,7 +502,12 @@ app.MapGet("/api/job/{rid}", (string rid, HttpContext ctx) =>
     {
         id = rid,
         status = job.Status,
-        log = job.Log,
+        log = job.Log.Select(l => new
+        {
+            t = l.OccurredAt.ToLocalTime().ToString("HH:mm:ss"),
+            msg = l.Message,
+            kind = l.Kind
+        }),
         error = job.Error,
         result = job.Result,
         // drives the stage list, progress bar and elapsed clock
@@ -596,7 +648,7 @@ app.MapGet("/api/runs", async (HttpContext ctx) =>
 
     return Results.Ok(runs.Select(r =>
     {
-        RunSummary summary = RunSummary.From(r.Result);
+        RunSummary summary = RunSummary.From(r.RunSetResults);
         return new
         {
             id = r.Id,
@@ -648,8 +700,8 @@ app.MapGet("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
         created_at = run.CreatedAt,
         finished_at = run.FinishedAt,
         error = run.Error,
-        log = run.Log,
-        result = run.Result,
+        log = RunDetailAssembler.BuildLog(run),
+        result = RunDetailAssembler.BuildResult(run),
         inputs_purged = run.InputsPurgedAt != null,
         chat = chat.Select(m => new
         {

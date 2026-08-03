@@ -6,19 +6,31 @@ using HazardRecon.Core.Services;
 namespace HazardRecon.Web;
 
 /// <summary>One row of the last-bucket-seen census: where the engine last saw an account.</summary>
-public record LastBucketRow(string Bucket, int Accounts, double Share, string Amount);
+public record LastBucketRow(
+    [property: JsonPropertyName("bucket")] string Bucket,
+    [property: JsonPropertyName("accounts")] int Accounts,
+    [property: JsonPropertyName("share")] double Share,
+    [property: JsonPropertyName("amount")] string Amount);
 
 /// <summary>A default that could not be traced, for the detail table.</summary>
-public record UntracedRow(string Account,
+public record UntracedRow(
+    [property: JsonPropertyName("account")] string Account,
     [property: JsonPropertyName("cohort_date")] string CohortDate,
-    string Rating, string Amount);
+    [property: JsonPropertyName("rating")] string Rating,
+    [property: JsonPropertyName("amount")] string Amount);
 
 /// <summary>A write-off with no default flag, for the exceptions table.</summary>
-public record WoExceptionRow(string Account, string Amount, string Date, string Window,
+public record WoExceptionRow(
+    [property: JsonPropertyName("account")] string Account,
+    [property: JsonPropertyName("amount")] string Amount,
+    [property: JsonPropertyName("date")] string Date,
+    [property: JsonPropertyName("window")] string Window,
     [property: JsonPropertyName("last_bucket")] string LastBucket);
 
 /// <summary>LGD by days since default, one row per event type.</summary>
-public record LgdRow(string Name, List<double?> Values);
+public record LgdRow(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("values")] List<double?> Values);
 
 /// <summary>
 /// Everything the run detail's dashboard tab draws, for one set.
@@ -30,13 +42,17 @@ public record LgdRow(string Name, List<double?> Values);
 /// </summary>
 public record DashboardSet
 {
+    [JsonPropertyName("key")]
     public string Key { get; init; } = string.Empty;
+    [JsonPropertyName("label")]
     public string Label { get; init; } = string.Empty;
 
     /// <summary>"All months" first, then each period the scored file covers.</summary>
+    [JsonPropertyName("months")]
     public List<string> Months { get; init; } = new();
 
     /// <summary>Month name to a 6x6 matrix of account movements, from bucket to bucket.</summary>
+    [JsonPropertyName("migration")]
     public Dictionary<string, List<List<int>>> Migration { get; init; } = new();
 
     /// <summary>Movements per month, in the order the months are listed.</summary>
@@ -44,9 +60,12 @@ public record DashboardSet
     public List<int> MonthlyTotals { get; init; } = new();
 
     /// <summary>The model's own fitted transition probabilities, from scenario.json.</summary>
+    [JsonPropertyName("hazard")]
     public List<List<double>>? Hazard { get; init; }
 
+    [JsonPropertyName("cohort")]
     public List<List<double>>? Cohort { get; init; }
+    [JsonPropertyName("lgd")]
     public List<LgdRow> Lgd { get; init; } = new();
 
     // the census, and the two check tables' remaining columns

@@ -349,7 +349,7 @@ public class WorkbookExporter
         }
 
         wb.SaveAs(path);
-        log?.Invoke($"workbook written: {filename}", "ok");
+        log?.Invoke($"workbook written: {filename}", LogKind.Ok);
         return filename;
     }
 }

@@ -126,16 +126,16 @@ Markdown tables. Keep it under 700 words.";
 
             if (string.IsNullOrEmpty(result))
             {
-                log?.Invoke("AI analysis returned no content", "warn");
+                log?.Invoke("AI analysis returned no content", LogKind.Warn);
                 return null;
             }
 
-            log?.Invoke($"AI analysis generated ({res.OutputTokens:N0} output tokens)", "ok");
+            log?.Invoke($"AI analysis generated ({res.OutputTokens:N0} output tokens)", LogKind.Ok);
             return result;
         }
         catch (Exception ex)
         {
-            log?.Invoke($"AI analysis unavailable: {ex.GetType().Name}: {ex.Message}", "warn");
+            log?.Invoke($"AI analysis unavailable: {ex.GetType().Name}: {ex.Message}", LogKind.Warn);
             return null;
         }
     }

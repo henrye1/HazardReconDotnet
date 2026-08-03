@@ -1,4 +1,3 @@
-using System.Text.Json;
 using HazardRecon.Web.Runs;
 using Xunit;
 
@@ -6,17 +5,21 @@ namespace HazardRecon.Tests.Web;
 
 public class RunSummaryTests
 {
-    private static JsonElement Json(string raw) => JsonDocument.Parse(raw).RootElement.Clone();
+    private static RunSetResultRecord Set(int untraced = 0, double traceRate = 0, int woInWindow = 0) => new()
+    {
+        UntracedTotal = untraced,
+        TraceRate = traceRate,
+        WoInWindow = woInWindow
+    };
 
     [Fact]
     public void TestSetsAreCountedAndUntracedSummed()
     {
-        RunSummary s = RunSummary.From(Json("""
-        {"sets":[
-          {"key":"A","untraced":12,"trace_rate":97.5},
-          {"key":"B","untraced":30,"trace_rate":92.5}
-        ]}
-        """));
+        RunSummary s = RunSummary.From(new[]
+        {
+            Set(untraced: 12, traceRate: 0.975),
+            Set(untraced: 30, traceRate: 0.925)
+        });
 
         Assert.Equal(2, s.Sets);
         Assert.Equal(42, s.Untraced);
@@ -28,12 +31,11 @@ public class RunSummaryTests
     {
         // "exceptions" in this product means write-offs inside the scoring window
         // that never reached default - what the run detail calls the priority ones
-        RunSummary s = RunSummary.From(Json("""
-        {"sets":[
-          {"key":"A","wo_in_window":9,"wo_post_window":400},
-          {"key":"B","wo_in_window":32,"wo_post_window":150}
-        ]}
-        """));
+        RunSummary s = RunSummary.From(new[]
+        {
+            Set(woInWindow: 9),
+            Set(woInWindow: 32)
+        });
 
         Assert.Equal(41, s.Exceptions);
     }
@@ -42,9 +44,7 @@ public class RunSummaryTests
     public void TestTraceRateIsAveragedNotSummed()
     {
         // summing would show 195% traced, which is the obvious way to get this wrong
-        RunSummary s = RunSummary.From(Json("""
-        {"sets":[{"trace_rate":100},{"trace_rate":95}]}
-        """));
+        RunSummary s = RunSummary.From(new[] { Set(traceRate: 1.0), Set(traceRate: 0.95) });
 
         Assert.Equal(97.5, s.TraceRate);
     }
@@ -52,38 +52,13 @@ public class RunSummaryTests
     [Fact]
     public void TestAResultWithNoSetsIsEmpty()
     {
-        Assert.Equal(RunSummary.Empty, RunSummary.From(Json("""{"sets":[]}""")));
-    }
-
-    [Fact]
-    public void TestAResultWithoutASetsArrayIsEmpty()
-    {
-        Assert.Equal(RunSummary.Empty, RunSummary.From(Json("""{"workbook":"x.xlsx"}""")));
+        Assert.Equal(RunSummary.Empty, RunSummary.From(Array.Empty<RunSetResultRecord>()));
     }
 
     [Fact]
     public void TestNullResultIsEmpty()
     {
-        // a run that failed or is still going has no result at all
+        // a run that failed or is still going has no set results at all
         Assert.Equal(RunSummary.Empty, RunSummary.From(null));
-    }
-
-    [Fact]
-    public void TestMissingFieldsOnASetAreTreatedAsZero()
-    {
-        // an older run stored before a field existed must not throw
-        RunSummary s = RunSummary.From(Json("""{"sets":[{"key":"A"},{"key":"B","untraced":5}]}"""));
-
-        Assert.Equal(2, s.Sets);
-        Assert.Equal(5, s.Untraced);
-        Assert.Equal(0, s.TraceRate);
-        Assert.Equal(0, s.Exceptions);
-    }
-
-    [Fact]
-    public void TestANonObjectResultIsEmpty()
-    {
-        Assert.Equal(RunSummary.Empty, RunSummary.From(Json("[]")));
-        Assert.Equal(RunSummary.Empty, RunSummary.From(Json("\"done\"")));
     }
 }

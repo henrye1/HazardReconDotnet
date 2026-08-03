@@ -60,16 +60,16 @@ public class DataLoaders
                     }
                 }
 
-                log?.Invoke($"scenario.json: hazard matrix {(scenario.HazardRateMatrix != null ? "ok" : "missing")}, {scenario.Lgd.Count} LGD term structure(s)", "ok");
+                log?.Invoke($"scenario.json: hazard matrix {(scenario.HazardRateMatrix != null ? "ok" : "missing")}, {scenario.Lgd.Count} LGD term structure(s)", LogKind.Ok);
             }
             catch (Exception ex)
             {
-                log?.Invoke($"scenario.json parse warning: {ex.Message}", "warn");
+                log?.Invoke($"scenario.json parse warning: {ex.Message}", LogKind.Warn);
             }
         }
         else
         {
-            log?.Invoke("scenario.json not found for this set", "warn");
+            log?.Invoke("scenario.json not found for this set", LogKind.Warn);
         }
 
         if (!string.IsNullOrEmpty(debugJsonPath) && File.Exists(debugJsonPath))
@@ -103,7 +103,7 @@ public class DataLoaders
             }
             catch (Exception ex)
             {
-                log?.Invoke($"debug.json parse warning: {ex.Message}", "warn");
+                log?.Invoke($"debug.json parse warning: {ex.Message}", LogKind.Warn);
             }
         }
 
@@ -137,7 +137,7 @@ public class DataLoaders
     {
         if (!File.Exists(lgdPath))
         {
-            log?.Invoke("lgd_defaults.csv MISSING", "warn");
+            log?.Invoke("lgd_defaults.csv MISSING", LogKind.Warn);
             return new List<DefaultAccountRecord>();
         }
 
@@ -250,7 +250,7 @@ public class DataLoaders
 
         int fullyRecoveredCount = defaults.Count(d => d.RecoveryStatus == "FULLY RECOVERED");
         double totalExp = defaults.Sum(d => d.DefaultAmount);
-        log?.Invoke($"defaults: {defaults.Count:N0} distinct accounts at Bucket 0 (exposure {AccountUtils.Money(totalExp)}); {fullyRecoveredCount:N0} fully recovered post-default", "ok");
+        log?.Invoke($"defaults: {defaults.Count:N0} distinct accounts at Bucket 0 (exposure {AccountUtils.Money(totalExp)}); {fullyRecoveredCount:N0} fully recovered post-default", LogKind.Ok);
 
         return defaults;
     }
@@ -259,7 +259,7 @@ public class DataLoaders
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
-            log?.Invoke("write-off file MISSING - check 2 cannot run", "warn");
+            log?.Invoke("write-off file MISSING - check 2 cannot run", LogKind.Warn);
             return (new List<WriteOffAggRecord>(), new HashSet<string>());
         }
 
@@ -307,7 +307,7 @@ public class DataLoaders
         DateTime? maxDate = rawRows.Where(r => r.ReportDate.HasValue).Max(r => r.ReportDate);
 
         string dateRangeStr = (minDate.HasValue && maxDate.HasValue) ? $" ({minDate.Value:yyyy-MM-dd} to {maxDate.Value:yyyy-MM-dd})" : "";
-        log?.Invoke($"write-off: {agg.Count:N0} distinct accounts from {rawRows.Count:N0} rows{dateRangeStr}", "ok");
+        log?.Invoke($"write-off: {agg.Count:N0} distinct accounts from {rawRows.Count:N0} rows{dateRangeStr}", LogKind.Ok);
 
         return (agg, acctSet);
     }
@@ -318,7 +318,7 @@ public class DataLoaders
 
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
-            log?.Invoke($"{label}: file MISSING", "warn");
+            log?.Invoke($"{label}: file MISSING", LogKind.Warn);
             return res;
         }
 
@@ -345,7 +345,7 @@ public class DataLoaders
             }
         }
 
-        log?.Invoke($"{label}: {res.AccountNumbers.Count:N0} distinct accounts", "ok");
+        log?.Invoke($"{label}: {res.AccountNumbers.Count:N0} distinct accounts", LogKind.Ok);
         return res;
     }
 

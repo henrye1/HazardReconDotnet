@@ -16,7 +16,7 @@ public class SupabaseRunStoreTests
       {
         "id": "22222222-2222-2222-2222-222222222222",
         "user_id": "11111111-1111-1111-1111-111111111111",
-        "status": "ready",
+        "status_id": 1,
         "model_id": null,
         "set_labels": ["JUN2026 0.5PCT"],
         "error": null,
@@ -97,7 +97,7 @@ public class SupabaseRunStoreTests
 
         Assert.Equal("PATCH", handler.Requests[0].Method);
         Assert.Contains($"id=eq.{RunId}", handler.Requests[0].Url);
-        Assert.Contains("\"status\":\"error\"", handler.Requests[0].Body);
+        Assert.Contains("\"status_id\":4", handler.Requests[0].Body);
         Assert.Contains("Boom: it broke", handler.Requests[0].Body);
     }
 
@@ -126,7 +126,7 @@ public class SupabaseRunStoreTests
 
         Assert.Equal(2, changed);
         Assert.Equal("PATCH", handler.Requests[0].Method);
-        Assert.Contains("status=eq.running", handler.Requests[0].Url);
-        Assert.Contains("\"status\":\"interrupted\"", handler.Requests[0].Body);
+        Assert.Contains("status_id=eq.2", handler.Requests[0].Url);
+        Assert.Contains("\"status_id\":5", handler.Requests[0].Body);
     }
 }

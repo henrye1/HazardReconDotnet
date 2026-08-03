@@ -7,6 +7,27 @@ namespace HazardRecon.Web.Runs;
 public class SupabaseRunStore : IRunStore
 {
     private const string Table = "/rest/v1/runs";
+    private const string RpcSaveCompletion = "/rest/v1/rpc/save_run_completion";
+
+    /// <summary>Every child table a run detail view needs, in one round trip.</summary>
+    private const string DetailEmbed =
+        "run_results(*)," +
+        "logs(*)," +
+        "run_output_files(*)," +
+        "run_commentary_lines(*)," +
+        "run_set_results(*," +
+            "run_set_migration_cells(*)," +
+            "run_set_monthly_totals(*)," +
+            "run_set_hazard_matrix(*)," +
+            "run_set_cohort_matrix(*)," +
+            "run_set_lgd_points(*)," +
+            "run_set_last_bucket_rows(*)," +
+            "run_set_untraced_rows(*)," +
+            "run_set_wo_exception_rows(*)," +
+            "run_set_engine_params(*))";
+
+    /// <summary>Only what RunSummary needs, so the history list stays cheap.</summary>
+    private const string SummaryEmbed = "run_set_results(untraced_total,trace_rate,wo_in_window)";
 
     private static readonly Dictionary<string, string> ReturnRow =
         new() { ["Prefer"] = "return=representation" };
@@ -24,7 +45,7 @@ public class SupabaseRunStore : IRunStore
     public async Task<RunRecord> CreateAsync(Guid userId, IReadOnlyList<string> setLabels, CancellationToken ct = default)
     {
         string body = await _rest.SendAsync(HttpMethod.Post, Table,
-            Json(new { user_id = userId, status = "ready", set_labels = setLabels }),
+            Json(new { user_id = userId, status_id = RunStatus.IdOf(RunStatus.Ready), set_labels = setLabels }),
             ReturnRow, ct);
 
         List<RunRecord> rows = Parse(body);
@@ -41,7 +62,7 @@ public class SupabaseRunStore : IRunStore
         // filtered by user as well as id: an unknown owner must look identical to
         // a missing run, so the endpoint can answer 404 rather than 403
         string body = await _rest.SendAsync(HttpMethod.Get,
-            $"{Table}?id=eq.{runId}&user_id=eq.{userId}&select=*", null, null, ct);
+            $"{Table}?id=eq.{runId}&user_id=eq.{userId}&select=*,{DetailEmbed}", null, null, ct);
 
         return Parse(body).FirstOrDefault();
     }
@@ -49,7 +70,7 @@ public class SupabaseRunStore : IRunStore
     public async Task<IReadOnlyList<RunRecord>> ListAsync(Guid userId, int limit = 50, CancellationToken ct = default)
     {
         string body = await _rest.SendAsync(HttpMethod.Get,
-            $"{Table}?user_id=eq.{userId}&select=*&order=created_at.desc&limit={limit}", null, null, ct);
+            $"{Table}?user_id=eq.{userId}&select=*,{SummaryEmbed}&order=created_at.desc&limit={limit}", null, null, ct);
 
         return Parse(body);
     }
@@ -58,12 +79,12 @@ public class SupabaseRunStore : IRunStore
     {
         Dictionary<string, object?> patch = new()
         {
-            ["status"] = status,
+            ["status_id"] = RunStatus.IdOf(status),
             ["error"] = error
         };
 
-        if (status == "running") patch["started_at"] = DateTimeOffset.UtcNow;
-        if (status is "done" or "error" or "interrupted") patch["finished_at"] = DateTimeOffset.UtcNow;
+        if (status == RunStatus.Running) patch["started_at"] = DateTimeOffset.UtcNow;
+        if (status is RunStatus.Done or RunStatus.Error or RunStatus.Interrupted) patch["finished_at"] = DateTimeOffset.UtcNow;
 
         await _rest.SendAsync(HttpMethod.Patch, $"{Table}?id=eq.{runId}",
             Json(patch), ReturnRow, ct);
@@ -77,25 +98,35 @@ public class SupabaseRunStore : IRunStore
 
     public async Task SaveCompletionAsync(
         Guid runId,
+        Guid userId,
         string status,
         string? error,
-        object? result,
-        object? analysisPayload,
-        object log,
+        RunResultsRecord runResults,
+        IReadOnlyList<RunSetResultRecord> setResults,
+        IReadOnlyList<LogEntryRecord> log,
+        IReadOnlyList<RunOutputFileRecord> outputFiles,
+        IReadOnlyList<RunCommentaryLineRecord> commentaryLines,
         CancellationToken ct = default)
     {
-        Dictionary<string, object?> patch = new()
+        var payload = new
         {
-            ["status"] = status,
-            ["error"] = error,
-            ["result"] = result,
-            ["analysis_payload"] = analysisPayload,
-            ["log"] = log,
-            ["finished_at"] = DateTimeOffset.UtcNow
+            status_id = RunStatus.IdOf(status),
+            error,
+            run_results = runResults,
+            run_set_results = setResults,
+            logs = log,
+            run_output_files = outputFiles,
+            run_commentary_lines = commentaryLines
         };
 
-        await _rest.SendAsync(HttpMethod.Patch, $"{Table}?id=eq.{runId}",
-            Json(patch), ReturnRow, ct);
+        var body = new
+        {
+            p_run_id = runId,
+            p_user_id = userId,
+            p_payload = payload
+        };
+
+        await _rest.SendAsync(HttpMethod.Post, RpcSaveCompletion, Json(body), null, ct);
     }
 
     public async Task<int> CountSinceAsync(Guid userId, DateTimeOffset since, CancellationToken ct = default)
@@ -129,8 +160,8 @@ public class SupabaseRunStore : IRunStore
     public async Task<int> MarkRunningAsInterruptedAsync(CancellationToken ct = default)
     {
         string body = await _rest.SendAsync(HttpMethod.Patch,
-            $"{Table}?status=eq.running",
-            Json(new { status = "interrupted", finished_at = DateTimeOffset.UtcNow }),
+            $"{Table}?status_id=eq.{RunStatus.IdOf(RunStatus.Running)}",
+            Json(new { status_id = RunStatus.IdOf(RunStatus.Interrupted), finished_at = DateTimeOffset.UtcNow }),
             ReturnRow, ct);
 
         using JsonDocument doc = JsonDocument.Parse(body);

@@ -119,11 +119,11 @@ public class InputDiscoverer
             try
             {
                 ZipFile.ExtractToDirectory(zips[0], dest, overwriteFiles: true);
-                log?.Invoke($"extracted {Path.GetFileName(zips[0])}", "info");
+                log?.Invoke($"extracted {Path.GetFileName(zips[0])}", LogKind.Info);
             }
             catch (Exception ex)
             {
-                log?.Invoke($"could not extract {Path.GetFileName(zips[0])}: {ex.Message}", "warn");
+                log?.Invoke($"could not extract {Path.GetFileName(zips[0])}: {ex.Message}", LogKind.Warn);
             }
 
             lgdFiles = Directory.GetFiles(dirPath, "lgd_defaults.csv", SearchOption.AllDirectories).ToList();
@@ -185,7 +185,7 @@ public class InputDiscoverer
             InventorySet? s = BuildSet(d, log);
             if (s == null)
             {
-                log?.Invoke($"no engine data found in {f}", "warn");
+                log?.Invoke($"no engine data found in {f}", LogKind.Warn);
                 continue;
             }
 
@@ -199,10 +199,10 @@ public class InputDiscoverer
             }
 
             inv.Sets[key] = s;
-            log?.Invoke($"{key}: write-off {(s.WriteOff != null ? "found" : "MISSING")}", "info");
+            log?.Invoke($"{key}: write-off {(s.WriteOff != null ? "found" : "MISSING")}", LogKind.Info);
         }
 
-        log?.Invoke($"discovered {inv.Sets.Count} set(s): {(inv.Sets.Count > 0 ? string.Join(", ", inv.Sets.Keys) : "none")}", "ok");
+        log?.Invoke($"discovered {inv.Sets.Count} set(s): {(inv.Sets.Count > 0 ? string.Join(", ", inv.Sets.Keys) : "none")}", LogKind.Ok);
         return inv;
     }
 
@@ -262,7 +262,7 @@ public class InputDiscoverer
             if (found.Count > 0)
             {
                 candidates = found.OrderBy(d => d).ToList();
-                log?.Invoke($"debug sets found nested below the folder you chose ({candidates.Count})", "info");
+                log?.Invoke($"debug sets found nested below the folder you chose ({candidates.Count})", LogKind.Info);
             }
         }
 
@@ -288,7 +288,7 @@ public class InputDiscoverer
             inv.Sets[key] = s;
         }
 
-        log?.Invoke($"discovered {inv.Sets.Count} debug set(s): {(inv.Sets.Count > 0 ? string.Join(", ", inv.Sets.Keys) : "none")}; write-off={(inv.WriteOff != null ? "found" : "MISSING")}", "ok");
+        log?.Invoke($"discovered {inv.Sets.Count} debug set(s): {(inv.Sets.Count > 0 ? string.Join(", ", inv.Sets.Keys) : "none")}; write-off={(inv.WriteOff != null ? "found" : "MISSING")}", LogKind.Ok);
         return inv;
     }
 }

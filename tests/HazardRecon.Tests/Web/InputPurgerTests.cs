@@ -13,7 +13,7 @@ public class InputPurgerTests
     {
         Id = Guid.NewGuid(),
         UserId = UserId,
-        Status = "done",
+        StatusId = RunStatus.IdOf(RunStatus.Done),
         CreatedAt = Now.AddDays(-daysOld)
     };
 
