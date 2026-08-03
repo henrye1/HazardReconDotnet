@@ -159,7 +159,10 @@ public class ReconciliationEngine
         return (records, summary);
     }
 
-    public ReconciliationRunResult Run(object root, string outdir = "output", Action<string, string>? logger = null, bool analyze = false, AiAnalysisService? analyst = null, StageReporter? stages = null)
+    public ReconciliationRunResult Run(
+        object root, string outdir = "output", Action<string, string>? logger = null,
+        bool analyze = false, AiAnalysisService? analyst = null, StageReporter? stages = null,
+        IReadOnlyDictionary<string, SetColumnMaps>? columnMaps = null)
     {
         Directory.CreateDirectory(outdir);
         Action<string, string> log = (msg, kind) =>
@@ -210,14 +213,14 @@ public class ReconciliationEngine
         stages.Plan(StageKeys.Tail(analyze));
 
         Dictionary<string, (List<WriteOffAggRecord> Agg, HashSet<string> Accts)> woCache = new();
-        (List<WriteOffAggRecord> Agg, HashSet<string> Accts) GetWoFor(InventorySet setInfo)
+        (List<WriteOffAggRecord> Agg, HashSet<string> Accts) GetWoFor(InventorySet setInfo, ColumnMap? writeOffMap)
         {
             string? path = setInfo.WriteOff ?? inv.WriteOff;
             if (path == null) return (new List<WriteOffAggRecord>(), new HashSet<string>());
 
             if (!woCache.TryGetValue(path, out var cached))
             {
-                cached = _dataLoaders.LoadWriteoff(path, log);
+                cached = _dataLoaders.LoadWriteoff(path, log, writeOffMap);
                 woCache[path] = cached;
             }
             return cached;
@@ -229,13 +232,15 @@ public class ReconciliationEngine
         {
             log($"===== {key}  ({setInfo.Label}) =====", LogKind.Head);
 
+            SetColumnMaps? setMaps = columnMaps?.GetValueOrDefault(key);
+
             var (woAgg, woAccts, engine, defaults, ifrs9Res) = stages.Track(StageKeys.Load(key), () =>
             {
-                var (agg, accts) = GetWoFor(setInfo);
+                var (agg, accts) = GetWoFor(setInfo, setMaps?.WriteOff);
                 return (agg, accts,
                     _dataLoaders.LoadScenario(setInfo.Scenario, setInfo.DebugJson, log),
                     _dataLoaders.LoadDefaults(setInfo.LgdDefaults, log),
-                    _dataLoaders.LoadSourceAccounts(setInfo.Ifrs9, "LoanAccountNumber", $"{key} IFRS9", "AmountOutstanding", log));
+                    _dataLoaders.LoadSourceAccounts(setInfo.Ifrs9, "LoanAccountNumber", $"{key} IFRS9", "AmountOutstanding", log, setMaps?.Exposure));
             });
 
             var (full, untraced, summary) = stages.Track(StageKeys.Check1(key), () =>
