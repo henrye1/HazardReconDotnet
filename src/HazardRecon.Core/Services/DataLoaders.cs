@@ -17,6 +17,19 @@ public class DataLoaders
         BadDataFound = null
     };
 
+    private static CsvConfiguration ConfigFor(bool hasHeaders) => new(CultureInfo.InvariantCulture)
+    {
+        HasHeaderRecord = hasHeaders,
+        MissingFieldFound = null,
+        HeaderValidated = null,
+        BadDataFound = null
+    };
+
+    private static string? Field(CsvReader csv, bool hasHeaders, string sourceColumn) =>
+        hasHeaders
+            ? csv.GetField(sourceColumn)
+            : (int.TryParse(sourceColumn, out int idx) ? csv.GetField(idx) : csv.GetField(sourceColumn));
+
     public EngineScenario LoadScenario(string? scenarioPath, string? debugJsonPath, Action<string, string>? log = null)
     {
         EngineScenario scenario = new();
@@ -255,7 +268,8 @@ public class DataLoaders
         return defaults;
     }
 
-    public (List<WriteOffAggRecord> AggRecords, HashSet<string> AccountSet) LoadWriteoff(string? path, Action<string, string>? log = null)
+    public (List<WriteOffAggRecord> AggRecords, HashSet<string> AccountSet) LoadWriteoff(
+        string? path, Action<string, string>? log = null, ColumnMap? columnMap = null)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
@@ -263,21 +277,30 @@ public class DataLoaders
             return (new List<WriteOffAggRecord>(), new HashSet<string>());
         }
 
+        bool hasHeaders = columnMap?.HasHeaders ?? true;
         using var reader = new StreamReader(path);
-        using var csv = new CsvReader(reader, CsvConfig);
+        using var csv = new CsvReader(reader, ConfigFor(hasHeaders));
 
-        csv.Read();
-        csv.ReadHeader();
+        if (hasHeaders)
+        {
+            csv.Read();
+            csv.ReadHeader();
+        }
+
+        string acctCol = columnMap?.Resolve("LoanAccountNumber") ?? "LoanAccountNumber";
+        string custCol = columnMap?.Resolve("CustomerId") ?? "CustomerId";
+        string amtCol = columnMap?.Resolve("Amount") ?? "Amount";
+        string dateCol = columnMap?.Resolve("ReportDate") ?? "ReportDate";
 
         List<RawWriteOffRow> rawRows = new();
         while (csv.Read())
         {
-            string acct = AccountUtils.NormaliseAccount(csv.GetField("LoanAccountNumber"));
+            string acct = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, acctCol));
             if (string.IsNullOrEmpty(acct)) continue;
 
-            string custId = csv.GetField("CustomerId") ?? string.Empty;
-            double amt = double.TryParse(csv.GetField("Amount"), NumberStyles.Any, CultureInfo.InvariantCulture, out double val) ? val : 0.0;
-            DateTime? reportDate = DateTime.TryParse(csv.GetField("ReportDate"), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dt) ? dt : null;
+            string custId = Field(csv, hasHeaders, custCol) ?? string.Empty;
+            double amt = double.TryParse(Field(csv, hasHeaders, amtCol), NumberStyles.Any, CultureInfo.InvariantCulture, out double val) ? val : 0.0;
+            DateTime? reportDate = DateTime.TryParse(Field(csv, hasHeaders, dateCol), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dt) ? dt : null;
 
             rawRows.Add(new RawWriteOffRow
             {
@@ -312,7 +335,9 @@ public class DataLoaders
         return (agg, acctSet);
     }
 
-    public SourceAccountsResult LoadSourceAccounts(string? path, string colName, string label, string? amountCol = null, Action<string, string>? log = null)
+    public SourceAccountsResult LoadSourceAccounts(
+        string? path, string colName, string label, string? amountCol = null,
+        Action<string, string>? log = null, ColumnMap? columnMap = null)
     {
         SourceAccountsResult res = new();
 
@@ -322,25 +347,33 @@ public class DataLoaders
             return res;
         }
 
+        bool hasHeaders = columnMap?.HasHeaders ?? true;
         using var reader = new StreamReader(path);
-        using var csv = new CsvReader(reader, CsvConfig);
+        using var csv = new CsvReader(reader, ConfigFor(hasHeaders));
 
-        csv.Read();
-        csv.ReadHeader();
+        if (hasHeaders)
+        {
+            csv.Read();
+            csv.ReadHeader();
+        }
 
-        bool hasAmountCol = !string.IsNullOrEmpty(amountCol) && csv.HeaderRecord != null && csv.HeaderRecord.Contains(amountCol);
+        string resolvedColName = columnMap?.Resolve(colName) ?? colName;
+        string? resolvedAmountCol = amountCol == null ? null : (columnMap?.Resolve(amountCol) ?? amountCol);
+
+        bool hasAmountCol = resolvedAmountCol != null &&
+            (!hasHeaders || (csv.HeaderRecord != null && csv.HeaderRecord.Contains(resolvedAmountCol)));
 
         while (csv.Read())
         {
             res.TotalRows++;
-            string acct = AccountUtils.NormaliseAccount(csv.GetField(colName));
+            string acct = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, resolvedColName));
             if (string.IsNullOrEmpty(acct)) continue;
 
             res.AccountNumbers.Add(acct);
 
             if (hasAmountCol)
             {
-                double amt = double.TryParse(csv.GetField(amountCol), NumberStyles.Any, CultureInfo.InvariantCulture, out double val) ? val : 0.0;
+                double amt = double.TryParse(Field(csv, hasHeaders, resolvedAmountCol!), NumberStyles.Any, CultureInfo.InvariantCulture, out double val) ? val : 0.0;
                 res.AmountsPerAccount[acct] = res.AmountsPerAccount.GetValueOrDefault(acct, 0.0) + amt;
             }
         }
