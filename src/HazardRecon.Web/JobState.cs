@@ -5,6 +5,12 @@ namespace HazardRecon.Web;
 /// <summary>One line the engine logged, with the real timestamp public.logs needs.</summary>
 internal record JobLogEntry(DateTimeOffset OccurredAt, string Message, string Kind);
 
+/// <summary>
+/// Where a set's mappable files are on disk and whether each has a header row -
+/// populated once discovery runs, consumed once the mapping is confirmed.
+/// </summary>
+internal record MappableSetFiles(string WriteOffPath, bool WriteOffHasHeaders, string ExposurePath, bool ExposureHasHeaders);
+
 internal class JobState
 {
     public string Id { get; set; } = string.Empty;
@@ -32,4 +38,10 @@ internal class JobState
 
     public string? ModelId { get; set; }
     public Dictionary<string, object>? AnalysisPayload { get; set; }
+
+    /// <summary>Keyed by set key; populated by /api/discover, consumed by /api/discover/mapping.</summary>
+    public Dictionary<string, MappableSetFiles> MappableFiles { get; set; } = new();
+
+    /// <summary>Keyed by set key; populated by /api/discover/mapping, consumed by /api/run.</summary>
+    public Dictionary<string, SetColumnMaps> ColumnMaps { get; set; } = new();
 }
