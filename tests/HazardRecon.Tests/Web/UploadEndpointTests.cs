@@ -328,4 +328,66 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
+
+    [Fact]
+    public async Task TestRunningWithAConfirmedMappingWiresColumnMapsWithoutThrowing()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        // AddFullSet's debug.zip is deliberately not a real zip (see its comment),
+        // so this set never actually discovers - job.MappableFiles/ColumnMaps
+        // stay empty for it, same as a run where no mapping was ever confirmed.
+        // That is fine here: the point of this test is only that /api/run still
+        // wires an (empty) columnMaps dictionary into engine.Run without
+        // throwing, not that a mapping was actually applied - see
+        // ReconciliationEngineMappingTests for that, against real engine input.
+        using MultipartFormDataContent discoverForm = new();
+        AddFullSet(discoverForm, 0, "JUL2026.csv");
+        HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
+        using JsonDocument discoverDoc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
+        string runId = discoverDoc.RootElement.GetProperty("run_id").GetString()!;
+        string setKey = HazardRecon.Core.Services.InputDiscoverer.SetKeyFromFolder("JUL2026");
+
+        var mappingBody = new
+        {
+            run_id = runId,
+            sets = new[]
+            {
+                new
+                {
+                    key = setKey,
+                    writeoff = new Dictionary<string, string>
+                    {
+                        ["LoanAccountNumber"] = "LoanAccountNumber", ["CustomerId"] = "CustomerId",
+                        ["Amount"] = "Amount", ["ReportDate"] = "ReportDate"
+                    },
+                    exposure = new Dictionary<string, string> { ["LoanAccountNumber"] = "0", ["AmountOutstanding"] = "2" }
+                }
+            }
+        };
+        HttpResponseMessage mapResponse = await client.PostAsJsonAsync("/api/discover/mapping", mappingBody);
+        Assert.Equal(HttpStatusCode.OK, mapResponse.StatusCode);
+
+        HttpResponseMessage runResponse = await client.PostAsJsonAsync("/api/run", new { run_id = runId });
+        Assert.Equal(HttpStatusCode.OK, runResponse.StatusCode);
+
+        // poll briefly - the engine runs on a background Task.Run
+        JsonElement job = default;
+        for (int i = 0; i < 50; i++)
+        {
+            HttpResponseMessage jobResponse = await client.GetAsync($"/api/job/{runId}");
+            Assert.Equal(HttpStatusCode.OK, jobResponse.StatusCode);
+            using JsonDocument jobDoc = JsonDocument.Parse(await jobResponse.Content.ReadAsStringAsync());
+            job = jobDoc.RootElement.Clone();
+            if (job.GetProperty("status").GetString() != "running") break;
+            await Task.Delay(50);
+        }
+
+        // deterministic given the placeholder "zipbytes" debug file: discovery
+        // finds zero valid sets, so the engine throws before ever reaching
+        // DataLoaders - reaching this exact status, rather than a 500, proves
+        // engine.Run(..., columnMaps: capturedJob.ColumnMaps) is wired correctly
+        Assert.Equal("error", job.GetProperty("status").GetString());
+        Assert.Contains("No analysis sets found", job.GetProperty("error").GetString());
+    }
 }

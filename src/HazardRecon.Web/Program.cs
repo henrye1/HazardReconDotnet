@@ -470,7 +470,8 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
 
             ReconciliationRunResult outResult = engine.Run(
                 capturedJob.Roots, capturedJob.Outdir, logger: Logger,
-                analyze: analyst != null, analyst: analyst, stages: stages);
+                analyze: analyst != null, analyst: analyst, stages: stages,
+                columnMaps: capturedJob.ColumnMaps);
 
             // Isolated on purpose: this aggregation only feeds /api/chat. It must never
             // turn a completed run (workbook/CSVs/dashboard already on disk) into an
