@@ -447,7 +447,7 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
     job.FinishedAt = null;
 
     void Logger(string msg, string kind) =>
-        job.Log.Add(new JobLogEntry(DateTimeOffset.UtcNow, msg, kind));
+        job.Log.Enqueue(new JobLogEntry(DateTimeOffset.UtcNow, msg, kind));
 
     var capturedJob = job;
     StageReporter stages = new(list => capturedJob.Stages = list);

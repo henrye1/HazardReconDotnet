@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using HazardRecon.Core.Models;
 
 namespace HazardRecon.Web;
@@ -22,7 +23,12 @@ internal class JobState
     public List<string> Roots { get; set; } = new();
     public string Outdir { get; set; } = string.Empty;
     public string Indir { get; set; } = string.Empty;
-    public List<JobLogEntry> Log { get; set; } = new();
+    /// <summary>
+    /// A background Task.Run appends here while GET /api/job/{rid} concurrently
+    /// reads it for JSON serialization - a plain List{T} throws "Collection was
+    /// modified" under that interleaving, so this needs a thread-safe collection.
+    /// </summary>
+    public ConcurrentQueue<JobLogEntry> Log { get; set; } = new();
     public object? Result { get; set; }
     public string? Error { get; set; }
     public string Started { get; set; } = string.Empty;
