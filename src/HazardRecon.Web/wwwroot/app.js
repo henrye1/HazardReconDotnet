@@ -2,6 +2,9 @@
 
 const $ = (s) => document.querySelector(s);
 const el = (t, c, h) => { const n = document.createElement(t); if (c) n.className = c; if (h !== undefined) n.innerHTML = h; return n; };
+/* Label as text, not markup: a select's options carry column names read out of an
+   uploaded file, which may contain anything. */
+const option = (value, label) => { const o = el("option"); o.value = value; o.textContent = label; return o; };
 const fmt = (n) => (n === null || n === undefined) ? "&mdash;" : Number(n).toLocaleString();
 
 let RUN_ID = null;
@@ -153,6 +156,16 @@ function resetWizard() {
   stopPolling();
   RESULT = null;
   DETAIL_LOG = [];
+  // the previous run's files and mapping must not be carried into a new one
+  DISCOVERED = null;
+  MAP_FILES = [];
+  MAP_EDITS = {};
+  $("#map-files").innerHTML = "";
+  SETS = [emptySet()];
+  renderSets();
+  ["#step-files", "#step-mapping"].forEach(sel => {
+    const stale = $(sel).querySelector(".err"); if (stale) stale.remove();
+  });
   // a fresh run has been nowhere, so nothing is reachable from the rail yet
   STEP_REACHED = 0;
   setStep(0);
@@ -168,15 +181,19 @@ function showIdentity(session) {
 }
 
 const STEP_TITLES = [
-  "Choose your analysis folders",
+  "Choose your input files",
+  "Map columns to engine fields",
   "Confirm what was found",
   "Running the reconciliation",
   "Results",
 ];
 
-/* One body per step. Step 4 is the run detail, which is a screen of its own, so
-   it has no entry here. */
-const STEP_BODIES = ["#step-folders", "#step-confirm", "#step-run"];
+/* One body per step. The last step is the run detail, which is a screen of its
+   own, so it has no entry here. */
+const STEP_BODIES = ["#step-files", "#step-mapping", "#step-confirm", "#step-run"];
+
+/* The results step, which lives on its own screen rather than in a wizard body. */
+const STEP_RESULTS = STEP_TITLES.length - 1;
 
 let STEP_AT = 0;
 
@@ -201,7 +218,7 @@ function setStep(n) {
     $("#st-" + i).classList.toggle("was", i < n);
 
     // the results step is only reachable once there is a result to show
-    const canGo = i !== n && i <= STEP_REACHED && (i !== 3 || RESULT !== null);
+    const canGo = i !== n && i <= STEP_REACHED && (i !== STEP_RESULTS || RESULT !== null);
     $("#st-" + i).classList.toggle("nav", canGo);
     $("#rail-" + i).disabled = !canGo;
   }
@@ -209,8 +226,8 @@ function setStep(n) {
 
 function goStep(n) {
   if (n === STEP_AT || n > STEP_REACHED) return;
-  // step 4 is the run detail rather than a wizard body
-  if (n === 3) { if (RESULT) showResults(RESULT); return; }
+  // the results step is the run detail rather than a wizard body
+  if (n === STEP_RESULTS) { if (RESULT) showResults(RESULT); return; }
   setStep(n);
   $(STEP_BODIES[n]).scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -383,99 +400,181 @@ function openRun(id) {
     });
 }
 
-/* ---------- step 1: folder paths ---------- */
+/* ---------- step 1: the input files, one slot per role ---------- */
 const MAX_SETS = 4;
-let PATHS = 0;
 
 /* Comes from /api/config, so it cannot drift from the server's own limit and
-   reject folders the server would have accepted. Checked here to catch an
-   oversized folder before the upload, and again on the server because a browser
+   reject a set the server would have accepted. Checked here to catch an
+   oversized set before the upload, and again on the server because a browser
    check protects nobody. The fallback only applies before config arrives. */
 let MAX_SET_BYTES = 512 * 1024 * 1024;
 
-function addPathRow() {
-  if (PATHS >= MAX_SETS) return;
-  PATHS += 1;
-  const i = PATHS;
-  const d = el("div", "slot", `
-    <span class="ms-icon">folder_open</span>
-    <div class="sx">
-      <span class="num">Folder ${i}</span>
-      <input type="file" id="path${i}" webkitdirectory directory multiple>
-      <button type="button" class="pick" id="path${i}-pick">Choose a folder&hellip;</button>
-      <span class="meta" id="path${i}-info"></span>
-    </div>
-    <button class="x" id="path${i}-clear" title="Clear"><span class="ms-icon" style="font-size:20px">close</span></button>`);
-  $("#paths").appendChild(d);
+/* The four roles a set's files are uploaded under. `field` is the SetFileKind
+   the server parses out of the form field name, so these strings are a contract
+   with SetFileReceiver rather than labels - see /api/discover.
 
-  // the file input is hidden, so the folder name doubles as the picker
-  $("#path" + i + "-pick").addEventListener("click", () => $("#path" + i).click());
-  $("#path" + i).addEventListener("change", () => { describeSet(i); updateReady(); });
-  $("#path" + i + "-clear").addEventListener("click", () => {
-    $("#path" + i).value = "";
-    describeSet(i);
-    updateReady();
+   Only the scenario is optional: without an exposure or write-off file the
+   receiver rejects the set outright, and without the debug file there is no
+   lgd_defaults.csv, so discovery finds no set at all. */
+const FILE_KINDS = [
+  {
+    key: "exposure", field: "Exposure", label: "Exposure file", icon: "assessment",
+    hint: "The IFRS9 population for the reporting date", required: true, multiple: false,
+    accept: ".csv,text/csv",
+  },
+  {
+    key: "writeoff", field: "Writeoff", label: "Write-off file", icon: "receipt_long",
+    hint: "One row per written-off account", required: true, multiple: false,
+    accept: ".csv,text/csv",
+  },
+  {
+    key: "debug", field: "Debug", label: "Debug file", icon: "folder_zip",
+    hint: "debug.zip, or the extracted debug files", required: true, multiple: true,
+    accept: ".zip,.csv,.json",
+  },
+  {
+    key: "scenario", field: "Scenario", label: "Scenario file", icon: "settings",
+    hint: "Hazard matrix and LGD term structures (optional)", required: false, multiple: false,
+    accept: ".json",
+  },
+];
+
+/* The picked files live here rather than in the inputs, because a set can be
+   removed from the middle of the list and the rows after it have to be redrawn -
+   which throws away whatever those inputs were holding. */
+let SETS = [];
+let SET_SEQ = 0;
+
+const emptySet = () => {
+  SET_SEQ += 1;
+  const files = {};
+  FILE_KINDS.forEach(k => { files[k.key] = []; });
+  return { id: SET_SEQ, files };
+};
+
+const setBytes = (set) =>
+  FILE_KINDS.reduce((n, k) => n + set.files[k.key].reduce((m, f) => m + (f.size || 0), 0), 0);
+
+const kindsPicked = (set) => FILE_KINDS.filter(k => set.files[k.key].length);
+
+/* A set the server can actually take: every required role filled. */
+const setComplete = (set) => FILE_KINDS.every(k => !k.required || set.files[k.key].length);
+
+const setStarted = (set) => kindsPicked(set).length > 0;
+
+const sizeLabel = (bytes) => bytes >= 1024 * 1024
+  ? (bytes / (1024 * 1024)).toFixed(1) + " MB"
+  : Math.max(1, Math.round(bytes / 1024)) + " KB";
+
+/* What a slot says under its label: the chosen file and its size, or the hint
+   for a role still empty. Several debug files are summarised rather than listed,
+   since three extracted names do not fit on one line. */
+function slotSub(kind, files) {
+  if (!files.length) return kind.hint;
+  if (files.length === 1) return files[0].name + " · " + sizeLabel(files[0].size || 0);
+  const bytes = files.reduce((n, f) => n + (f.size || 0), 0);
+  return files.length + " files · " + sizeLabel(bytes);
+}
+
+function renderSets() {
+  const host = $("#sets");
+  host.innerHTML = "";
+
+  SETS.forEach((set, idx) => {
+    const wrap = el("div", "setblock");
+    const picked = kindsPicked(set).length;
+    const bytes = setBytes(set);
+    const tooBig = bytes > MAX_SET_BYTES;
+
+    const head = el("div", "sethead", `
+      <span class="sn">Set ${idx + 1}</span>
+      <span class="ss">${picked} of ${FILE_KINDS.length} files chosen${
+        tooBig
+          ? ` &mdash; ${sizeLabel(bytes)} is over the ${Math.round(MAX_SET_BYTES / (1024 * 1024))} MB limit`
+          : (setStarted(set) && !setComplete(set) ? " &mdash; still needs its required files" : "")
+      }</span>`);
+    if (tooBig) head.querySelector(".ss").classList.add("bad");
+
+    // one set has to remain, so it is cleared rather than removed
+    const drop = el("button", "x", '<span class="ms-icon" style="font-size:20px">close</span>');
+    drop.title = SETS.length > 1 ? "Remove set" : "Clear set";
+    drop.addEventListener("click", () => {
+      if (SETS.length > 1) SETS.splice(idx, 1);
+      else SETS[idx] = emptySet();
+      renderSets();
+    });
+    head.appendChild(drop);
+    wrap.appendChild(head);
+
+    FILE_KINDS.forEach(kind => {
+      const files = set.files[kind.key];
+      const on = files.length > 0;
+      const row = el("div", "slot" + (on ? " on" : ""), `
+        <span class="ms-icon">${kind.icon}</span>
+        <div class="sx">
+          <span class="num">${kind.label}</span>
+          <span class="meta${on ? " name" : ""}"></span>
+        </div>`);
+      // the file's own name, so as text rather than markup
+      row.querySelector(".meta").textContent = slotSub(kind, files);
+
+      const input = el("input");
+      input.type = "file";
+      input.accept = kind.accept;
+      if (kind.multiple) input.multiple = true;
+      input.addEventListener("change", () => {
+        if (input.files && input.files.length) {
+          set.files[kind.key] = Array.from(input.files);
+          renderSets();
+        }
+      });
+      row.appendChild(input);
+
+      const pick = el("button", "pick",
+        `<span class="ms-icon" style="font-size:18px">${on ? "swap_horiz" : "upload"}</span>` +
+        (on ? "Replace" : "Choose file"));
+      pick.type = "button";
+      pick.addEventListener("click", () => input.click());
+      row.appendChild(pick);
+
+      if (on) {
+        const clear = el("button", "x", '<span class="ms-icon" style="font-size:20px">close</span>');
+        clear.title = "Remove this file";
+        clear.addEventListener("click", () => { set.files[kind.key] = []; renderSets(); });
+        row.appendChild(clear);
+      }
+
+      wrap.appendChild(row);
+    });
+
+    host.appendChild(wrap);
   });
-  $("#btn-add-path").disabled = PATHS >= MAX_SETS;
-  describeSet(i);
-}
 
-function setFiles(i) {
-  const input = $("#path" + i);
-  return input && input.files ? Array.from(input.files) : [];
-}
-
-const setBytes = (files) => files.reduce((n, f) => n + (f.size || 0), 0);
-
-/* The folder's own name is only knowable from a file's relative path - the
-   picker never reveals where on disk it came from. */
-const setLabel = (files) =>
-  files.length ? (files[0].webkitRelativePath || files[0].name || "").split("/")[0] : "";
-
-function describeSet(i) {
-  const info = $("#path" + i + "-info");
-  const pick = $("#path" + i + "-pick");
-  const files = setFiles(i);
-
-  if (!files.length) {
-    pick.innerHTML = "Choose a folder&hellip;";
-    pick.className = "pick";
-    info.textContent = "";
-    info.className = "meta";
-    return;
-  }
-
-  // once chosen, the folder's own name is the heading and the picker becomes it
-  pick.textContent = setLabel(files);
-  pick.className = "pick name";
-
-  const bytes = setBytes(files);
-  const mb = bytes / (1024 * 1024);
-  const tooBig = bytes > MAX_SET_BYTES;
-  info.textContent = `${files.length} files, ${mb.toFixed(1)} MB` +
-    (tooBig ? ` - too large, the limit is ${Math.round(MAX_SET_BYTES / (1024 * 1024))} MB per folder` : "");
-  info.className = tooBig ? "meta bad" : "meta";
+  $("#btn-add-set").disabled = SETS.length >= MAX_SETS;
+  updateReady();
 }
 
 function updateReady() {
-  let chosen = 0;
-  let oversized = false;
-  for (let i = 1; i <= PATHS; i++) {
-    const files = setFiles(i);
-    if (!files.length) continue;
-    chosen += 1;
-    if (setBytes(files) > MAX_SET_BYTES) oversized = true;
-  }
-  $("#btn-check").disabled = chosen === 0 || oversized;
+  const started = SETS.filter(setStarted);
+  const ready = started.filter(setComplete);
+  const oversized = started.some(s => setBytes(s) > MAX_SET_BYTES);
 
-  $("#folder-count").textContent = chosen === 0
-    ? `No folders chosen yet, up to ${MAX_SETS}`
-    : `${chosen} of ${MAX_SETS} folders chosen`;
+  // a half-filled set would be rejected by the receiver, so it blocks here
+  // rather than after the upload has already been paid for
+  $("#btn-check").disabled = ready.length === 0 || ready.length !== started.length || oversized;
+
+  $("#set-count").textContent = started.length === 0
+    ? `No files chosen yet, up to ${MAX_SETS} sets`
+    : `${ready.length} of ${started.length} set${started.length === 1 ? "" : "s"} ready`;
 }
 
-addPathRow();
-$("#btn-add-path").addEventListener("click", addPathRow);
-updateReady();
+SETS = [emptySet()];
+renderSets();
+$("#btn-add-set").addEventListener("click", () => {
+  if (SETS.length >= MAX_SETS) return;
+  SETS.push(emptySet());
+  renderSets();
+});
 // no restore of a previous choice: a file input cannot be repopulated from
 // script, so there is nothing to put back. Run history replaces this.
 
@@ -527,22 +626,26 @@ $("#model").addEventListener("change", () => localStorage.setItem("hr_model", $(
 function discover() {
   const fd = new FormData();
   let sets = 0;
-  for (let i = 1; i <= PATHS; i++) {
-    const files = setFiles(i);
-    if (!files.length) continue;
-    // one field per file, named for its set; the third argument carries the
-    // path relative to the picked folder, which is what rebuilds the structure
-    files.forEach(f => fd.append("set" + sets, f, f.webkitRelativePath || f.name));
-    sets += 1;
-  }
 
-  if (sets === 0) return Promise.reject(new Error("Please choose at least one folder."));
+  // one field per file, named "set<n>.<Kind>" - the server splits that back into
+  // the set it belongs to and the role it was picked for, and stores it under the
+  // canonical name discovery looks for. Sets are numbered over those that were
+  // filled in, so clearing the middle one does not leave a gap.
+  SETS.forEach(set => {
+    const kinds = kindsPicked(set);
+    if (!kinds.length) return;
+    kinds.forEach(kind =>
+      set.files[kind.key].forEach(f => fd.append("set" + sets + "." + kind.field, f, f.name)));
+    sets += 1;
+  });
+
+  if (sets === 0) return Promise.reject(new Error("Please choose the files for at least one set."));
 
   return api("/api/discover", { method: "POST", body: fd })
     .then(readJson)
     .then(({ ok, status, j }) => {
       if (!ok || !j) throw new Error((j && j.error) || `Discovery failed (server returned ${status}).`);
-      showInventory(j);
+      showMapping(j);
       return j;
     });
 }
@@ -550,16 +653,16 @@ function discover() {
 $("#btn-check").addEventListener("click", () => {
   const btn = $("#btn-check");
   btn.disabled = true;
-  $("#btn-check-tx").textContent = "Checking...";
+  $("#btn-check-tx").textContent = "Uploading...";
   // Checking again supersedes anything in flight. Now that the rail can walk
   // back mid-run, a live poll would otherwise carry on against the run id this
   // discovery is about to replace, and report that as a failure.
   stopPolling();
   discover()
-    .catch(e => showError($("#step-confirm"), e.message))
+    .catch(e => showError($("#step-files"), e.message))
     .finally(() => {
       btn.disabled = false;
-      $("#btn-check-tx").textContent = "Check folders";
+      $("#btn-check-tx").textContent = "Check columns";
       updateReady();
     });
 });
@@ -571,9 +674,280 @@ function showError(card, msg) {
   if (!box.parentNode) card.appendChild(box);
 }
 
+/* ---------- step 2: column mapping ---------- */
+
+/* The discovery response, kept because the inventory is only drawn once the
+   mapping has been confirmed - a step later than the call that produced it. */
+let DISCOVERED = null;
+
+/* The files needing a mapping, flattened out of the response into one entry per
+   set per file so each can be drawn as its own table. */
+let MAP_FILES = [];
+
+/* Columns chosen by hand, keyed by set/file/field. Separate from the suggestion
+   in MAP_FILES so "Reset to suggestions" is just clearing this, and so a field
+   the user has touched can be labelled as theirs rather than the AI's. */
+let MAP_EDITS = {};
+
+const FILE_KIND_TITLES = { writeoff: "Write-off file", exposure: "Exposure file" };
+
+const editKey = (setKey, fileKind, field) => setKey + " " + fileKind + " " + field;
+
+/* The columns a field may be mapped to. A file with a header row is addressed by
+   header name; one without is addressed by 0-based index as a string, which is
+   what ColumnMap resolves against - so the option's value is the index, and only
+   its label is human-readable. */
+function mapColumns(view) {
+  const samples = view.samples || [];
+  if (view.has_headers && view.headers) {
+    return view.headers.map((h, i) => ({
+      value: h,
+      label: h || "(unnamed column " + (i + 1) + ")",
+      sample: (samples[0] || [])[i] || "",
+    }));
+  }
+
+  const width = samples.reduce((n, r) => Math.max(n, (r || []).length), 0);
+  const columns = [];
+  for (let i = 0; i < width; i++) {
+    columns.push({
+      value: String(i),
+      label: "Column " + (i + 1),
+      sample: (samples[0] || [])[i] || "",
+    });
+  }
+  return columns;
+}
+
+function buildMapFiles(j) {
+  const files = [];
+  (j.mapping || []).forEach(set => {
+    ["writeoff", "exposure"].forEach(fileKind => {
+      const view = set[fileKind];
+      if (!view) return;
+      files.push({
+        setKey: set.key,
+        fileKind,
+        title: FILE_KIND_TITLES[fileKind] + " · " + set.key,
+        hasHeaders: !!view.has_headers,
+        columns: mapColumns(view),
+        rows: (view.fields || []).map(f => ({
+          field: f.field,
+          note: f.note,
+          suggested: f.column || "",
+          confidence: f.confidence,
+          source: f.source,
+        })),
+      });
+    });
+  });
+  return files;
+}
+
+/* The column in force for a field: the user's if they have set one, otherwise
+   whatever discovery suggested. An empty string is a real value here - it is how
+   "not mapped" is chosen deliberately. */
+function mappedColumn(file, row) {
+  const k = editKey(file.setKey, file.fileKind, row.field);
+  return MAP_EDITS[k] !== undefined ? MAP_EDITS[k] : row.suggested;
+}
+
+const SOURCE_LABEL = { header_match: "Header match", saved: "Saved mapping" };
+
+function rowStatus(file, row) {
+  const column = mappedColumn(file, row);
+  const edited = MAP_EDITS[editKey(file.setKey, file.fileKind, row.field)] !== undefined;
+
+  if (!column) return { label: "Needs mapping", tone: "warn", icon: "error" };
+  if (edited) return { label: "Set by you", tone: "mine", icon: "edit" };
+  if (row.source === "ai_guess") {
+    const pct = row.confidence === null || row.confidence === undefined
+      ? "" : " " + Math.round(row.confidence * 100) + "%";
+    return { label: "AI" + pct, tone: "mine", icon: "auto_awesome" };
+  }
+  return { label: SOURCE_LABEL[row.source] || "Mapped", tone: "ok", icon: "check_circle" };
+}
+
+function showMapping(j) {
+  RUN_ID = j.run_id;
+  DISCOVERED = j;
+  MAP_FILES = buildMapFiles(j);
+  MAP_EDITS = {};
+
+  const stale = $("#step-mapping").querySelector(".err"); if (stale) stale.remove();
+  setStep(1);
+
+  // Nothing to map means no set survived discovery, which the inventory explains
+  // far better than an empty mapping step would. The rail can still walk back
+  // here, so it says why it is empty rather than showing its loading line.
+  if (!MAP_FILES.length) {
+    $("#map-headline").textContent = "There is nothing to map";
+    $("#map-subline").textContent =
+      "No set was discovered from these files, so no columns could be read. The inventory says what was missing.";
+    $("#map-gate").textContent = "";
+    $("#map-gate").classList.remove("bad");
+    $("#btn-confirm-map").disabled = true;
+    showInventory(j);
+    return;
+  }
+
+  renderMapping();
+  $("#step-mapping").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderMapping() {
+  const host = $("#map-files");
+  host.innerHTML = "";
+
+  let unmapped = 0;
+  let guessed = 0;
+  let headerless = 0;
+
+  MAP_FILES.forEach(file => {
+    if (!file.hasHeaders) headerless += 1;
+
+    const card = el("div", "card");
+    const note = file.hasHeaders
+      ? '<span class="okflag"><span class="ms-icon" style="font-size:18px">check_circle</span>' +
+        "Headers found &mdash; matched by name</span>"
+      : '<span class="okflag ai"><span class="ms-icon" style="font-size:18px">auto_awesome</span>' +
+        "No header row &mdash; mapped by column</span>";
+    const head = el("div", "cardhead", "<span></span>" + note);
+    // the title carries the set key, which came from an uploaded file's name
+    head.firstChild.textContent = file.title;
+    card.appendChild(head);
+
+    const body = el("div", "maptable");
+    const table = el("table", "grid tight maprows");
+    table.innerHTML =
+      "<thead><tr><th>Engine field</th><th>Column in your file</th><th>Sample</th><th>Match</th></tr>" +
+      "</thead><tbody></tbody>";
+    const tbody = table.querySelector("tbody");
+
+    file.rows.forEach(row => {
+      const column = mappedColumn(file, row);
+      if (!column) unmapped += 1;
+      if (column && row.source === "ai_guess" &&
+          MAP_EDITS[editKey(file.setKey, file.fileKind, row.field)] === undefined) guessed += 1;
+
+      const status = rowStatus(file, row);
+      const chosen = file.columns.find(c => c.value === column);
+
+      const tr = el("tr");
+      tr.appendChild(el("td", "mapfield",
+        "<b>" + row.field + "</b><span>" + (row.note || "") + "</span>"));
+
+      const pickCell = el("td");
+      const sel = el("select");
+      sel.className = column ? "mapsel" : "mapsel bad";
+      // every option's text is a column name out of the uploaded file, so each is
+      // set as text - a header is data, and must never be read as markup
+      sel.appendChild(option("", "— not mapped —"));
+      file.columns.forEach(c => sel.appendChild(option(c.value, c.label)));
+      // a saved or AI-guessed column can name something this file does not have,
+      // so it is offered explicitly rather than silently falling back to blank
+      if (column && !chosen) sel.appendChild(option(column, column + " (not in this file)"));
+      sel.value = column;
+      sel.addEventListener("change", () => {
+        MAP_EDITS[editKey(file.setKey, file.fileKind, row.field)] = sel.value;
+        renderMapping();
+      });
+      pickCell.appendChild(sel);
+      tr.appendChild(pickCell);
+
+      const sample = el("td", "mapsample");
+      // a row straight out of the file, so as text
+      sample.textContent = chosen && chosen.sample ? chosen.sample : "—";
+      tr.appendChild(sample);
+
+      tr.appendChild(el("td", "nowrap",
+        '<span class="mapflag ' + status.tone + '">' +
+        '<span class="ms-icon" style="font-size:15px">' + status.icon + "</span>" +
+        status.label + "</span>"));
+
+      tbody.appendChild(tr);
+    });
+
+    body.appendChild(table);
+    card.appendChild(body);
+    host.appendChild(card);
+  });
+
+  $("#map-headline").textContent = unmapped
+    ? (unmapped === 1 ? "1 field still needs a column" : unmapped + " fields still need columns")
+    : "Every engine field is mapped";
+
+  const sub = [];
+  if (headerless) {
+    sub.push(headerless === 1
+      ? "One file has no header row, so its columns are offered by position."
+      : headerless + " files have no header row, so their columns are offered by position.");
+  }
+  if (guessed) {
+    sub.push(guessed === 1
+      ? "1 field was matched for you from the first rows - check it before continuing."
+      : guessed + " fields were matched for you from the first rows - check them before continuing.");
+  }
+  if (!sub.length) sub.push("Each column was matched by its header name.");
+  $("#map-subline").textContent = sub.join(" ");
+
+  const gate = $("#map-gate");
+  gate.textContent = unmapped
+    ? "Map every field to continue"
+    : "The mapping is saved with the run, and reused next time these files are uploaded";
+  gate.classList.toggle("bad", unmapped > 0);
+  $("#btn-confirm-map").disabled = unmapped > 0;
+}
+
+/* The confirmed mapping, in the shape /api/discover/mapping reads: one entry per
+   set, each carrying a field-to-column object per file. */
+function mappingPayload() {
+  const bySet = {};
+  MAP_FILES.forEach(file => {
+    const set = bySet[file.setKey] || (bySet[file.setKey] = { key: file.setKey });
+    const mapping = set[file.fileKind] || (set[file.fileKind] = {});
+    file.rows.forEach(row => {
+      const column = mappedColumn(file, row);
+      if (column) mapping[row.field] = column;
+    });
+  });
+  return { run_id: RUN_ID, sets: Object.keys(bySet).map(k => bySet[k]) };
+}
+
+function confirmMapping() {
+  return api("/api/discover/mapping", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(mappingPayload()),
+  })
+    .then(readJson)
+    .then(({ ok, status, j }) => {
+      if (!ok) throw new Error((j && j.error) || `Could not save the mapping (server returned ${status}).`);
+      showInventory(DISCOVERED);
+    });
+}
+
+$("#btn-confirm-map").addEventListener("click", () => {
+  const btn = $("#btn-confirm-map");
+  btn.disabled = true;
+  $("#btn-confirm-map-tx").textContent = "Saving...";
+  const stale = $("#step-mapping").querySelector(".err"); if (stale) stale.remove();
+  confirmMapping()
+    .catch(e => showError($("#step-mapping"), e.message))
+    .finally(() => {
+      $("#btn-confirm-map-tx").textContent = "Confirm mapping";
+      // renderMapping owns the button's state, so it decides whether the retry
+      // is allowed rather than this handler assuming it is
+      if (MAP_FILES.length) renderMapping();
+    });
+});
+
+$("#btn-remap").addEventListener("click", () => { MAP_EDITS = {}; renderMapping(); });
+$("#btn-back-files").addEventListener("click", () => goStep(0));
+
 function showInventory(j) {
   RUN_ID = j.run_id;
-  setStep(1);
+  setStep(2);
   const card = $("#card-inv");
   const old = card.querySelector(".err"); if (old) old.remove();
 
@@ -632,7 +1006,7 @@ function beginRun() {
   RESULT = null;
   // Run again is offered from the run detail, so come back to the wizard first
   showScreen("wizard");
-  setStep(2);
+  setStep(3);
   setChatOpen(false);
   const stale = $("#step-run").querySelector(".err"); if (stale) stale.remove();
 
@@ -753,7 +1127,7 @@ $("#btn-rerun").addEventListener("click", beginRun);
 
 /* Back to the folders, keeping whatever was picked - the inventory is discarded
    because the folders may change before the next check. */
-$("#btn-back-folders").addEventListener("click", () => goStep(0));
+$("#btn-back-map").addEventListener("click", () => goStep(1));
 
 function setBadge(text, cls) {
   const b = $("#run-badge");

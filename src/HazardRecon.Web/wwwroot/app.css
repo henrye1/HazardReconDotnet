@@ -337,31 +337,52 @@ input[type=file]::file-selector-button:hover{background:var(--cl-hover-color)}
 /* the wizard's cards sit a little tighter than the rest of the app */
 .cols2 .cardbody,.stepgrid .cardbody{padding:15px}
 
-/* ---------- folder slots ---------- */
+/* ---------- one set's four file slots ---------- */
+/* the set's own rows read as a group, set apart from the next set's */
+.setblock{margin-bottom:18px}
+.sethead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sethead .sn{
+  font-size:12px;font-weight:700;color:var(--cl-primary-color);
+  text-transform:uppercase;letter-spacing:.06em;flex:none;
+}
+.sethead .ss{
+  font-size:13px;color:var(--cl-off-text-color);flex:1;min-width:0;text-wrap:pretty;
+}
+.sethead .ss.bad{color:var(--cl-error-color);font-weight:600}
+.sethead .x{
+  border:0;background:transparent;cursor:pointer;padding:4px;display:flex;
+  color:var(--cl-off-text-color);flex:none;
+}
+.sethead .x:hover{color:var(--cl-error-color)}
+
 .slot{
   border:1px solid var(--cl-border-color);border-radius:var(--border-radius);
   padding:14px 16px;margin-bottom:12px;background:#fff;
-  display:flex;align-items:flex-start;gap:14px;
+  display:flex;align-items:center;gap:14px;
 }
+/* an empty slot recedes; a filled one reads as settled */
+.slot:not(.on){border-color:var(--cl-grey-color-light)}
+.slot:not(.on)>.ms-icon{color:var(--cl-grey-color-light)}
 .slot>.ms-icon{font-size:24px;color:var(--cl-primary-color);flex:none}
-.slot .sx{flex:1;min-width:0;display:grid;gap:6px}
-.slot .sx .num{
-  font-size:12px;color:var(--cl-off-text-color);text-transform:uppercase;letter-spacing:.06em;
-}
-.slot .sx .name{
-  font-size:15px;font-weight:700;color:var(--cl-text-color);
+.slot .sx{flex:1;min-width:0;display:grid;gap:2px}
+/* the role is the heading; the file that fills it, or the hint, sits under it */
+.slot .sx .num{font-size:14px;font-weight:700;color:var(--cl-text-color)}
+.slot .sx .meta{
+  font-size:13px;color:var(--cl-off-text-color);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.slot .sx .meta{font-size:13px;color:var(--cl-off-text-color)}
+.slot .sx .meta.name{color:var(--cl-text-color)}
 .slot .sx .meta.bad{color:var(--cl-error-color);font-weight:600}
-/* the picker itself is only reachable through the folder name, which acts as the
-   button - a bare file input is not what the reference shows */
+/* the input is only reachable through the button beside it - a bare file input is
+   not what the reference shows */
 .slot input[type=file]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .slot .pick{
-  background:transparent;border:0;padding:0;cursor:pointer;text-align:left;
-  font-family:var(--font-family);font-size:15px;font-weight:700;color:var(--cl-primary-color);
+  flex:none;border:1px solid var(--cl-border-color);background:#fff;cursor:pointer;
+  padding:8px 14px;border-radius:var(--border-radius);
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--font-family);font-size:13px;font-weight:600;color:var(--cl-primary-color);
 }
-.slot .pick:hover{color:var(--cl-action-color)}
+.slot .pick:hover{background:var(--cl-block-accent-color);border-color:var(--cl-primary-color)}
 .slot .x{
   border:0;background:transparent;cursor:pointer;padding:4px;display:flex;
   color:var(--cl-off-text-color);flex:none;
@@ -386,11 +407,52 @@ input[type=file]::file-selector-button:hover{background:var(--cl-hover-color)}
 .req b{font-size:14px;font-weight:600}
 .req span{font-size:13px;color:var(--cl-off-text-color);text-wrap:pretty}
 
+/* ---------- column mapping ---------- */
+.maphead{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.maphead>.ms-icon{font-size:24px;color:var(--cl-primary-color);flex:none}
+.maphead .mx{flex:1;min-width:220px;display:grid;gap:2px}
+.maphead .mx b{font-size:15px;font-weight:700;color:var(--cl-text-color)}
+.maphead .mx span{font-size:13px;color:var(--cl-off-text-color);text-wrap:pretty}
+/* the button is a plain one, so it does not compete with Confirm mapping */
+.maphead .btn{height:40px;padding:0 14px;font-size:13px;flex:none}
+
+/* a wide file scrolls its own table rather than stretching the card */
+.maptable{overflow-x:auto}
+table.maprows{min-width:720px}
+table.grid td.mapfield{display:table-cell;white-space:normal}
+table.grid td.mapfield b{
+  display:block;font-family:ui-monospace,monospace;font-size:13px;font-weight:700;
+  color:var(--cl-primary-color);
+}
+table.grid td.mapfield span{
+  display:block;margin-top:3px;font-size:12px;color:var(--cl-off-text-color);text-wrap:pretty;
+}
+table.grid td.mapsample{
+  font-family:ui-monospace,monospace;font-size:12px;color:var(--cl-off-text-color);
+  white-space:nowrap;
+}
+select.mapsel{width:100%;min-width:190px;height:40px}
+/* an unmapped field is the one thing stopping the step, so it is marked as such */
+select.mapsel.bad{border-color:var(--cl-warning-text)}
+
+.mapflag{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 9px;
+  font-size:12px;font-weight:600;white-space:nowrap;
+}
+.mapflag.ok{color:var(--cl-status-completed-text);background:var(--cl-status-completed-bg)}
+.mapflag.mine{color:var(--cl-primary-color);background:var(--cl-block-accent-color)}
+/* amber text on amber, matching the tone .warn and .rag .amber already use */
+.mapflag.warn{color:#7a5b00;background:var(--cl-warning-bg)}
+/* the gate note beside Confirm mapping */
+#map-gate.bad{color:#7a5b00;font-weight:600}
+
 /* ---------- inventory ---------- */
 .okflag{
   display:inline-flex;align-items:center;gap:6px;
   font-size:13px;font-weight:600;color:var(--cl-success-color);
 }
+/* a file mapped by position rather than by a header name it does not have */
+.okflag.ai{color:var(--cl-primary-color)}
 .path{font-size:13px;word-break:break-all}
 table.grid.tight th,table.grid.tight td{padding:12px 16px}
 table.grid td.setkey{font-weight:700;color:var(--cl-primary-color);white-space:nowrap}

@@ -132,27 +132,34 @@
           <div class="st on" id="st-0">
             <button type="button" class="stbtn" id="rail-0">
               <span class="n">1</span>
-              <span class="tx"><b>Folders</b><span>Pick up to four</span></span>
+              <span class="tx"><b>Files</b><span>Up to four sets</span></span>
             </button>
             <div class="line"></div>
           </div>
           <div class="st" id="st-1">
             <button type="button" class="stbtn" id="rail-1">
               <span class="n">2</span>
-              <span class="tx"><b>Confirm</b><span>What was found</span></span>
+              <span class="tx"><b>Map columns</b><span>Engine fields</span></span>
             </button>
             <div class="line"></div>
           </div>
           <div class="st" id="st-2">
             <button type="button" class="stbtn" id="rail-2">
               <span class="n">3</span>
-              <span class="tx"><b>Run</b><span>Checks and engine</span></span>
+              <span class="tx"><b>Confirm</b><span>What was found</span></span>
             </button>
             <div class="line"></div>
           </div>
           <div class="st" id="st-3">
             <button type="button" class="stbtn" id="rail-3">
               <span class="n">4</span>
+              <span class="tx"><b>Run</b><span>Checks and engine</span></span>
+            </button>
+            <div class="line"></div>
+          </div>
+          <div class="st" id="st-4">
+            <button type="button" class="stbtn" id="rail-4">
+              <span class="n">5</span>
               <span class="tx"><b>Results</b><span>Review and ask</span></span>
             </button>
             <div class="line"></div>
@@ -162,25 +169,24 @@
 
       <div class="wrap narrow">
 
-        <!-- step 1 : folders -->
-        <div class="cols2" id="step-folders">
+        <!-- step 1 : input files, picked one at a time per set -->
+        <div class="cols2" id="step-files">
           <div class="card">
-            <div class="cardhead"><span>Analysis folders</span></div>
+            <div class="cardhead"><span>Input files</span></div>
             <div class="cardbody">
-              <p class="hint" style="margin:0 0 15px">Choose up to four analysis folders. Each folder holds
-                everything for its set &mdash; the write-off CSV, the IFRS9 CSV,
-                <code>debug.zip</code> (or the extracted files) and <code>scenario.json</code>.
-                Contents are uploaded, so a large folder takes a moment.</p>
+              <p class="hint" style="margin:0 0 15px">Pick the files for each set. Files are uploaded
+                individually, so you can replace one without re-uploading the rest. Column headers are
+                checked on the next step.</p>
 
-              <div id="paths"></div>
-              <button class="addfolder" id="btn-add-path">
-                <span class="ms-icon" style="font-size:20px">add</span>Add another folder
+              <div id="sets"></div>
+              <button class="addfolder" id="btn-add-set">
+                <span class="ms-icon" style="font-size:20px">add</span>Add another set
               </button>
 
               <div class="actions right">
-                <span class="hint" style="margin:0" id="folder-count"></span>
+                <span class="hint" style="margin:0" id="set-count"></span>
                 <button class="btn primary big" id="btn-check" disabled>
-                  <span id="btn-check-tx">Check folders</span>
+                  <span id="btn-check-tx">Check columns</span>
                   <span class="ms-icon" style="font-size:20px">arrow_forward</span>
                 </button>
               </div>
@@ -188,37 +194,75 @@
           </div>
 
           <div class="card">
-            <div class="cardhead"><span>What a folder must contain</span></div>
+            <div class="cardhead"><span>What each file needs</span></div>
             <div class="cardbody reqs">
               <div class="req">
-                <span class="ms-icon">description</span>
-                <div><b>The write-off CSV</b>
-                  <span>Any CSV in the folder. Files named <code>writeoff_not_default</code> and anything
-                    under an <code>output</code> folder are ignored.</span></div>
+                <span class="ms-icon">assessment</span>
+                <div><b>Exposure file</b>
+                  <span>The IFRS9 population for the reporting date. Needs an account number and an
+                    amount outstanding.</span></div>
               </div>
               <div class="req">
-                <span class="ms-icon">description</span>
-                <div><b>The IFRS9 CSV</b>
-                  <span>A CSV with <code>IFRS9</code> in its name, holding the account numbers and
-                    amounts outstanding.</span></div>
+                <span class="ms-icon">receipt_long</span>
+                <div><b>Write-off file</b>
+                  <span>One row per written-off account. Needs an account number, a customer id, an
+                    amount and a report date.</span></div>
               </div>
               <div class="req">
                 <span class="ms-icon">folder_zip</span>
-                <div><b><code>debug.zip</code></b>
-                  <span>Holds <code>lgd_defaults.csv</code> and <code>pd_scored.csv</code>. Files you have
-                    already extracted work just as well.</span></div>
+                <div><b>Debug file</b>
+                  <span><code>debug.zip</code>, or the extracted <code>lgd_defaults.csv</code>,
+                    <code>pd_scored.csv</code> and <code>debug.json</code>. Add each extracted file
+                    separately.</span></div>
               </div>
               <div class="req">
                 <span class="ms-icon">settings</span>
-                <div><b><code>scenario.json</code></b>
-                  <span>The engine's own parameters, including the scoring window.
+                <div><b>Scenario file</b>
+                  <span>The hazard matrix and LGD term structures the engine ran with.
                     <code>debug.json</code> also works.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">auto_awesome</span>
+                <div><b>Missing headers?</b>
+                  <span>A file without a header row is mapped for you on the next step, and you can
+                    correct any column by hand.</span></div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- step 2 : confirm -->
+        <!-- step 2 : map each file's columns onto the engine's fields -->
+        <div class="stepgrid hide" id="step-mapping">
+          <div class="card">
+            <div class="cardbody maphead">
+              <span class="ms-icon">auto_awesome</span>
+              <div class="mx">
+                <b id="map-headline">Checking your columns&hellip;</b>
+                <span id="map-subline"></span>
+              </div>
+              <button class="btn" id="btn-remap">
+                <span class="ms-icon" style="font-size:18px">refresh</span>Reset to suggestions
+              </button>
+            </div>
+          </div>
+
+          <div id="map-files"></div>
+
+          <div class="actions">
+            <span class="hint" style="margin:0" id="map-gate"></span>
+            <div class="actions right" style="margin:0 0 0 auto">
+              <button class="btn ghost" id="btn-back-files">
+                <span class="ms-icon" style="font-size:20px">arrow_back</span>Back
+              </button>
+              <button class="btn primary big" id="btn-confirm-map" disabled>
+                <span id="btn-confirm-map-tx">Confirm mapping</span>
+                <span class="ms-icon" style="font-size:20px">arrow_forward</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 3 : confirm -->
         <div class="stepgrid hide" id="step-confirm">
           <div class="card" id="card-inv">
             <div class="cardhead">
@@ -243,7 +287,7 @@
               </div>
               <p class="hint" id="model-note" style="margin:0 0 6px;max-width:360px"></p>
               <div class="actions right" style="margin-top:0">
-                <button class="btn ghost" id="btn-back-folders">
+                <button class="btn ghost" id="btn-back-map">
                   <span class="ms-icon" style="font-size:20px">arrow_back</span>Back
                 </button>
                 <button class="btn primary big" id="btn-run">
@@ -256,7 +300,7 @@
           <p class="hint" style="margin:0">Two checks per set, plus migrations and engine results.</p>
         </div>
 
-        <!-- step 3 : progress -->
+        <!-- step 4 : progress -->
         <div class="stepgrid hide" id="step-run">
           <div class="card">
             <div class="runhead">
