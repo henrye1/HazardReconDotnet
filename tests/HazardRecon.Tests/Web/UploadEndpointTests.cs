@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -271,5 +273,59 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.DoesNotContain("SOMEONE ELSE", body);
+    }
+
+    [Fact]
+    public async Task TestConfirmingAMappingSavesItForReuse()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent discoverForm = new();
+        AddDiscoverableSet(discoverForm, 0, "JUN2026.csv");
+        HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
+        string discoverBody = await discoverResponse.Content.ReadAsStringAsync();
+
+        using JsonDocument doc = JsonDocument.Parse(discoverBody);
+        string runId = doc.RootElement.GetProperty("run_id").GetString()!;
+        string setKey = doc.RootElement.GetProperty("mapping")[0].GetProperty("key").GetString()!;
+
+        var mappingBody = new
+        {
+            run_id = runId,
+            sets = new[]
+            {
+                new
+                {
+                    key = setKey,
+                    writeoff = new Dictionary<string, string>
+                    {
+                        ["LoanAccountNumber"] = "LoanAccountNumber", ["CustomerId"] = "CustomerId",
+                        ["Amount"] = "Amount", ["ReportDate"] = "ReportDate"
+                    },
+                    exposure = new Dictionary<string, string> { ["LoanAccountNumber"] = "0", ["AmountOutstanding"] = "2" }
+                }
+            }
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/discover/mapping", mappingBody);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotEmpty(_factory.MappingStore.RunMappings);
+        Assert.Contains(_factory.MappingStore.RunMappings, m => m.FileKind == "writeoff" && m.Mapping["Amount"] == "Amount");
+        Assert.Contains(_factory.MappingStore.RunMappings, m => m.FileKind == "exposure" && m.Mapping["LoanAccountNumber"] == "0");
+        // the saved profile is also updated, so a future upload with this column shape reuses it
+        Assert.NotEmpty(_factory.MappingStore.Saved);
+    }
+
+    [Fact]
+    public async Task TestConfirmingAMappingForAnUnknownRunIs404()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        var mappingBody = new { run_id = Guid.NewGuid().ToString(), sets = Array.Empty<object>() };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/discover/mapping", mappingBody);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 }

@@ -347,6 +347,71 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     });
 }).RequireAuthorization();
 
+// POST /api/discover/mapping - persists the user-confirmed column mapping for
+// each set's write-off/exposure files: an audit row per run+set+file, and an
+// upserted reusable profile keyed by the file's column signature so the same
+// export format does not need re-mapping next time. Stashes the confirmed
+// maps into JobState so /api/run can hand them to the engine directly.
+app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
+{
+    using var reader = new StreamReader(ctx.Request.Body);
+    string bodyStr = await reader.ReadToEndAsync();
+    using var doc = JsonDocument.Parse(bodyStr);
+
+    string? rid = doc.RootElement.TryGetProperty("run_id", out var rProp) ? rProp.GetString() : null;
+
+    Guid? userId = SupabaseJwt.UserId(ctx.User);
+    if (userId == null) return Results.Unauthorized();
+
+    if (string.IsNullOrEmpty(rid) || !jobs.TryGetValue(rid, out var job) || job.UserId != userId.Value)
+        return Results.NotFound(new { error = "Unknown run - please run discovery again." });
+
+    if (!doc.RootElement.TryGetProperty("sets", out JsonElement setsElem) || setsElem.ValueKind != JsonValueKind.Array)
+        return Results.BadRequest(new { error = "Missing 'sets'." });
+
+    Guid runGuid = Guid.Parse(rid);
+
+    foreach (JsonElement setElem in setsElem.EnumerateArray())
+    {
+        string key = setElem.GetProperty("key").GetString() ?? "";
+        if (!job.MappableFiles.TryGetValue(key, out MappableSetFiles? files)) continue;
+
+        Dictionary<string, string> writeoffMapping = ReadMapping(setElem, "writeoff");
+        Dictionary<string, string> exposureMapping = ReadMapping(setElem, "exposure");
+
+        await columnMappingStore.RecordRunMappingAsync(runGuid, key, "writeoff", writeoffMapping);
+        await columnMappingStore.RecordRunMappingAsync(runGuid, key, "exposure", exposureMapping);
+
+        CsvSniff writeoffSniff = CsvSniffer.Sniff(files.WriteOffPath);
+        CsvSniff exposureSniff = CsvSniffer.Sniff(files.ExposurePath);
+        string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
+        string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
+
+        await columnMappingStore.SaveMappingAsync(userId.Value, "writeoff", writeoffSignature, writeoffMapping);
+        await columnMappingStore.SaveMappingAsync(userId.Value, "exposure", exposureSignature, exposureMapping);
+
+        job.ColumnMaps[key] = new SetColumnMaps(
+            new ColumnMap(files.WriteOffHasHeaders, writeoffMapping),
+            new ColumnMap(files.ExposureHasHeaders, exposureMapping));
+    }
+
+    return Results.Ok(new { ok = true });
+
+    static Dictionary<string, string> ReadMapping(JsonElement setElem, string fileKind)
+    {
+        Dictionary<string, string> mapping = new();
+        if (setElem.TryGetProperty(fileKind, out JsonElement fileElem) && fileElem.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty prop in fileElem.EnumerateObject())
+            {
+                string? value = prop.Value.GetString();
+                if (!string.IsNullOrEmpty(value)) mapping[prop.Name] = value;
+            }
+        }
+        return mapping;
+    }
+}).RequireAuthorization();
+
 // POST /api/run
 app.MapPost("/api/run", async (HttpContext ctx) =>
 {
