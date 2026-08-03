@@ -76,6 +76,7 @@ builder.Services.AddSingleton<IRunFileStore>(sp => new SupabaseRunFileStore(sp.G
 builder.Services.AddSingleton<IFileStore>(sp => new SupabaseFileStore(
     sp.GetRequiredService<SupabaseRestClient>(), sp.GetRequiredService<SupabaseOptions>()));
 builder.Services.AddSingleton<IChatStore>(sp => new SupabaseChatStore(sp.GetRequiredService<SupabaseRestClient>()));
+builder.Services.AddSingleton<IColumnMappingStore>(sp => new SupabaseColumnMappingStore(sp.GetRequiredService<SupabaseRestClient>()));
 builder.Services.AddSingleton(sp => new RunPersister(
     sp.GetRequiredService<IFileStore>(), sp.GetRequiredService<IRunFileStore>()));
 builder.Services.AddSingleton(sp => new InputPurger(
@@ -88,15 +89,15 @@ builder.Services.AddHostedService<InputPurgeService>();
 // multipart at 128 MB, so both have to be lifted to whatever the upload limit
 // actually is - otherwise a folder inside the limit still dies as a 413.
 long maxBytesPerSet = builder.Configuration.GetValue<long?>("Uploads:MaxBytesPerSet")
-    ?? UploadReceiver.DefaultMaxBytesPerSet;
-long maxRequestBytes = maxBytesPerSet * UploadReceiver.MaxSets + (16L * 1024 * 1024);
+    ?? SetFileReceiver.DefaultMaxBytesPerSet;
+long maxRequestBytes = maxBytesPerSet * SetFileReceiver.MaxSets + (16L * 1024 * 1024);
 
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxRequestBytes);
 builder.Services.Configure<FormOptions>(o =>
 {
     o.MultipartBodyLengthLimit = maxRequestBytes;
     o.MultipartHeadersLengthLimit = 65536;
-    o.ValueCountLimit = UploadReceiver.MaxFilesPerSet * UploadReceiver.MaxSets + 32;
+    o.ValueCountLimit = 8 * SetFileReceiver.MaxSets + 32; // 4 kinds, up to 3 loose debug files
 });
 
 var app = builder.Build();
@@ -124,6 +125,10 @@ if (llm == null)
     Console.WriteLine(" ! CyteLlm:ClientId / CyteLlm:ClientSecret not set - AI analysis and chat are unavailable.");
 }
 
+// header-match and saved-mapping resolution always run through this service;
+// only the AI-guess step needs llm/MappingModelId, and no-ops without them
+ColumnMappingService columnMapper = new(llm, llmOptions.MappingModelId);
+
 string baseDir = AppContext.BaseDirectory;
 string runsDir = Path.Combine(baseDir, "runs");
 Directory.CreateDirectory(runsDir);
@@ -135,6 +140,7 @@ IRunStore runStore = app.Services.GetRequiredService<IRunStore>();
 IRunFileStore runFileStore = app.Services.GetRequiredService<IRunFileStore>();
 IFileStore fileStore = app.Services.GetRequiredService<IFileStore>();
 IChatStore chatStore = app.Services.GetRequiredService<IChatStore>();
+IColumnMappingStore columnMappingStore = app.Services.GetRequiredService<IColumnMappingStore>();
 RunPersister persister = app.Services.GetRequiredService<RunPersister>();
 
 // A run only lives in this process, so anything still flagged running was killed
@@ -153,14 +159,16 @@ catch (Exception ex)
 /// <summary>20 runs per rolling 24 hours, per the spec's abuse guard.</summary>
 const int RunsPerDay = 20;
 
-// POST /api/discover - receives the picked folders as an upload. A browser
-// cannot disclose a folder's path, so the files themselves are sent and
-// rehydrated into a directory shaped exactly like the folder the user chose.
-// Everything downstream - discovery, the engine, the exporters - is unchanged.
+// POST /api/discover - receives one exposure (IFRS9), one write-off, one
+// debug (zip or its 1-3 loose extracted files), and one scenario file per
+// set, each tagged by the client as set{N}.{kind}. Rehydrates each under the
+// canonical name InputDiscoverer.BuildSet already looks for, so file *role*
+// is never guessed - only the write-off/exposure CSVs' *columns* need a
+// mapping, resolved here and returned for the Map-columns step to confirm.
 app.MapPost("/api/discover", async (HttpContext ctx) =>
 {
     if (!ctx.Request.HasFormContentType)
-        return Results.BadRequest(new { error = "Please choose at least one folder." });
+        return Results.BadRequest(new { error = "Please choose at least one set's files." });
 
     IFormCollection form;
     try
@@ -173,23 +181,23 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         // this the user gets a bare 500 for what is a bad request
         return Results.BadRequest(new
         {
-            error = "Please choose at least one folder.",
+            error = "Please choose at least one set's files.",
             detail = ex.GetType().Name
         });
     }
 
-    List<UploadItem> items = new();
+    List<SetFileItem> items = new();
     foreach (IFormFile file in form.Files)
     {
-        // the browser sends one field per file, named set0..set3, carrying the
-        // file's path relative to the folder that was picked
-        if (!file.Name.StartsWith("set", StringComparison.OrdinalIgnoreCase)
-            || !int.TryParse(file.Name.AsSpan(3), out int setIndex))
+        string[] parts = file.Name.Split('.', 2);
+        if (parts.Length != 2 || !parts[0].StartsWith("set", StringComparison.OrdinalIgnoreCase)
+            || !int.TryParse(parts[0].AsSpan(3), out int setIndex)
+            || !Enum.TryParse(parts[1], ignoreCase: true, out SetFileKind kind))
         {
             return Results.BadRequest(new { error = $"Unexpected upload field '{file.Name}'." });
         }
 
-        items.Add(new UploadItem(setIndex, file.FileName, file.OpenReadStream(), file.Length));
+        items.Add(new SetFileItem(setIndex, kind, file.FileName, file.OpenReadStream(), file.Length));
     }
 
     Guid? userId = SupabaseJwt.UserId(ctx.User);
@@ -203,10 +211,15 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
             statusCode: 429);
     }
 
-    // the run id is the database's, so every artifact path and every later
-    // lookup keys off the same value
+    if (items.Count == 0)
+        return Results.BadRequest(new { error = "Please choose at least one set's files." });
+
     RunRecord created = await runStore.CreateAsync(
-        userId.Value, items.Select(i => i.RelativePath.Split('/')[0]).Distinct().ToList());
+        userId.Value,
+        items.Where(i => i.Kind == SetFileKind.Exposure)
+            .OrderBy(i => i.SetIndex)
+            .Select(i => Path.GetFileNameWithoutExtension(i.OriginalFileName))
+            .ToList());
 
     string rid = created.Id.ToString();
     string runRoot = Path.Combine(runsDir, rid);
@@ -215,29 +228,25 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     Directory.CreateDirectory(outdir);
     Directory.CreateDirectory(indir);
 
-    UploadOutcome upload = await new UploadReceiver(maxBytesPerSet).ReceiveAsync(indir, items, ctx.RequestAborted);
-    if (!upload.Ok)
+    SetReceiveOutcome received = await new SetFileReceiver(maxBytesPerSet).ReceiveAsync(indir, items, ctx.RequestAborted);
+    if (!received.Ok)
     {
         Directory.Delete(runRoot, recursive: true);
-        await runStore.UpdateStatusAsync(created.Id, "error", upload.Error);
-        return Results.BadRequest(new { error = upload.Error });
+        await runStore.UpdateStatusAsync(created.Id, "error", received.Error);
+        return Results.BadRequest(new { error = received.Error });
     }
-
-    List<string> paths = upload.Sets.Select(s => s.Root).ToList();
 
     jobs[rid] = new JobState
     {
         Id = rid,
         UserId = userId.Value,
         Status = "ready",
-        Roots = paths,
+        Roots = received.Sets.Select(s => s.Root).ToList(),
         Outdir = outdir,
         Indir = indir,
         Started = DateTime.Now.ToString("o")
     };
 
-    // the uploaded inputs go up in the background: the user is waiting on
-    // discovery, and a slow transfer must not hold up the inventory
     _ = Task.Run(async () =>
     {
         try
@@ -250,40 +259,91 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         }
     });
 
-    var probe = new ProbeLogger();
     var discoverer = new InputDiscoverer();
-    Inventory inv = discoverer.DiscoverFromFolders(paths, probe.Log);
-
-    var setViews = inv.Sets.Select(kv => new
-    {
-        key = kv.Key,
-        label = kv.Value.Label,
-        lgd_defaults = string.IsNullOrEmpty(kv.Value.LgdDefaults) ? null : Path.GetFileName(kv.Value.LgdDefaults),
-        pd_scored = kv.Value.PdScored == null ? null : Path.GetFileName(kv.Value.PdScored),
-        ifrs9 = kv.Value.Ifrs9 == null ? null : Path.GetFileName(kv.Value.Ifrs9),
-        scenario = kv.Value.Scenario == null ? null : Path.GetFileName(kv.Value.Scenario),
-        debug_json = kv.Value.DebugJson == null ? null : Path.GetFileName(kv.Value.DebugJson),
-        writeoff = kv.Value.WriteOff == null ? null : Path.GetFileName(kv.Value.WriteOff)
-    }).ToList();
-
+    var setViews = new List<object>();
+    var mappingViews = new List<object>();
     var problems = new List<string>();
-    if (inv.Sets.Count == 0)
-        problems.Add("No analysis sets found. Each folder needs debug.zip (or an extracted lgd_defaults.csv).");
 
-    foreach (var s in setViews)
+    foreach (ReceivedSet rs in received.Sets)
     {
-        if (string.IsNullOrEmpty(s.writeoff)) problems.Add($"{s.key}: no write-off CSV - check 2 cannot run for this set.");
-        if (string.IsNullOrEmpty(s.pd_scored)) problems.Add($"{s.key}: pd_scored.csv missing - no migrations.");
-        if (string.IsNullOrEmpty(s.scenario)) problems.Add($"{s.key}: scenario.json missing - no engine results.");
-        if (string.IsNullOrEmpty(s.ifrs9)) problems.Add($"{s.key}: no IFRS9 file - defaults can only trace to write-off.");
+        InventorySet? s = discoverer.BuildSet(rs.Root);
+        if (s == null)
+        {
+            problems.Add($"{rs.Label}: no analysis data found - check the debug file.");
+            continue;
+        }
+
+        s.Label = rs.Label;
+        string key = InputDiscoverer.SetKeyFromFolder(rs.Label);
+
+        setViews.Add(new
+        {
+            key,
+            label = s.Label,
+            lgd_defaults = s.LgdDefaults == null ? null : Path.GetFileName(s.LgdDefaults),
+            pd_scored = s.PdScored == null ? null : Path.GetFileName(s.PdScored),
+            ifrs9 = s.Ifrs9 == null ? null : Path.GetFileName(s.Ifrs9),
+            scenario = s.Scenario == null ? null : Path.GetFileName(s.Scenario),
+            debug_json = s.DebugJson == null ? null : Path.GetFileName(s.DebugJson),
+            writeoff = s.WriteOff == null ? null : Path.GetFileName(s.WriteOff)
+        });
+
+        if (string.IsNullOrEmpty(s.WriteOff)) problems.Add($"{key}: no write-off CSV - check 2 cannot run for this set.");
+        if (string.IsNullOrEmpty(s.PdScored)) problems.Add($"{key}: pd_scored.csv missing - no migrations.");
+        if (string.IsNullOrEmpty(s.Scenario)) problems.Add($"{key}: scenario.json missing - no engine results.");
+        if (string.IsNullOrEmpty(s.Ifrs9)) problems.Add($"{key}: no IFRS9 file - defaults can only trace to write-off.");
+
+        string writeOffPath = Path.Combine(rs.Root, "writeoff.csv");
+        string exposurePath = Path.Combine(rs.Root, "IFRS9.csv");
+
+        CsvSniff writeoffSniff = CsvSniffer.Sniff(writeOffPath);
+        CsvSniff exposureSniff = CsvSniffer.Sniff(exposurePath);
+
+        jobs[rid].MappableFiles[key] = new MappableSetFiles(
+            writeOffPath, writeoffSniff.HasHeaders, exposurePath, exposureSniff.HasHeaders);
+
+        string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
+        string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
+
+        IReadOnlyDictionary<string, string> savedWriteoff =
+            await columnMappingStore.GetSavedMappingAsync(userId.Value, "writeoff", writeoffSignature);
+        IReadOnlyDictionary<string, string> savedExposure =
+            await columnMappingStore.GetSavedMappingAsync(userId.Value, "exposure", exposureSignature);
+
+        IReadOnlyList<ResolvedField> writeoffFields =
+            columnMapper.Resolve(writeoffSniff.Headers, writeoffSniff.SampleRows, MappableFields.Writeoff, savedWriteoff);
+        IReadOnlyList<ResolvedField> exposureFields =
+            columnMapper.Resolve(exposureSniff.Headers, exposureSniff.SampleRows, MappableFields.Exposure, savedExposure);
+
+        object FileView(CsvSniff sniff, IReadOnlyList<MappingFieldSpec> specs, IReadOnlyList<ResolvedField> resolved) => new
+        {
+            has_headers = sniff.HasHeaders,
+            headers = sniff.Headers,
+            samples = sniff.SampleRows,
+            fields = specs.Select(spec =>
+            {
+                ResolvedField r = resolved.First(x => x.Field == spec.Field);
+                return new { field = spec.Field, note = spec.Note, column = r.Column, confidence = r.Confidence, source = r.Source };
+            })
+        };
+
+        mappingViews.Add(new
+        {
+            key,
+            writeoff = FileView(writeoffSniff, MappableFields.Writeoff, writeoffFields),
+            exposure = FileView(exposureSniff, MappableFields.Exposure, exposureFields)
+        });
     }
+
+    if (setViews.Count == 0)
+        problems.Insert(0, "No analysis sets found. Each set needs debug.zip (or an extracted lgd_defaults.csv).");
 
     return Results.Ok(new
     {
         run_id = rid,
-        inventory = new { root = inv.Root, sets = setViews },
+        inventory = new { root = string.Join("; ", received.Sets.Select(s => s.Root)), sets = setViews },
         problems,
-        log = probe.Lines
+        mapping = mappingViews
     });
 }).RequireAuthorization();
 
@@ -751,8 +811,9 @@ app.MapGet("/api/config", () => Results.Ok(new
     // served rather than duplicated in app.js: a browser limit that disagrees
     // with the server's rejects folders the server would have accepted
     maxBytesPerSet,
-    maxFilesPerSet = UploadReceiver.MaxFilesPerSet,
-    maxSets = UploadReceiver.MaxSets
+    // 4 file kinds, with debug worth up to 3 (a zip, or its 3 loose extracted files)
+    maxFilesPerSet = 6,
+    maxSets = SetFileReceiver.MaxSets
 }));
 
 // GET /health

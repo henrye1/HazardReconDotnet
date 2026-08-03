@@ -99,4 +99,30 @@ public class ColumnMappingServiceTests
 
         Assert.All(resolved, r => Assert.Equal("unmapped", r.Source));
     }
+
+    [Fact]
+    public void TestANullClientStillResolvesHeaderMatchesAndSavedMappings()
+    {
+        // the LLM gateway being unconfigured must not lose the free resolution
+        // steps that need no AI call at all
+        ColumnMappingService service = new(client: null, modelId: null);
+
+        var resolved = service.Resolve(
+            headers: new[] { "LoanAccountNumber" },
+            sampleRows: new List<IReadOnlyList<string>>(),
+            fields: new[] { MappableFields.Exposure[0] },
+            savedMapping: null);
+
+        Assert.Equal("header_match", resolved[0].Source);
+    }
+
+    [Fact]
+    public void TestANullClientFallsBackToUnmappedWhenNoHeaderOrSavedMatch()
+    {
+        ColumnMappingService service = new(client: null, modelId: null);
+
+        var resolved = service.Resolve(null, new List<IReadOnlyList<string>>(), Fields, null);
+
+        Assert.All(resolved, r => Assert.Equal("unmapped", r.Source));
+    }
 }

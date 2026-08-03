@@ -31,10 +31,15 @@ as a string if it does not) and a confidence between 0 and 1. If no column
 plausibly matches a field, omit that field entirely. Example shape:
 {""FieldName"": {""column"": ""ColumnNameOrIndex"", ""confidence"": 0.97}}";
 
-    private readonly ILlmClient _client;
-    private readonly string _modelId;
+    private readonly ILlmClient? _client;
+    private readonly string? _modelId;
 
-    public ColumnMappingService(ILlmClient client, string modelId)
+    /// <summary>
+    /// Client/model are nullable so header-match and saved-mapping resolution
+    /// still run when the LLM gateway isn't configured - only the AI-guess
+    /// step is skipped, exactly as if every guess call had failed.
+    /// </summary>
+    public ColumnMappingService(ILlmClient? client, string? modelId)
     {
         _client = client;
         _modelId = modelId;
@@ -89,6 +94,11 @@ plausibly matches a field, omit that field entirely. Example shape:
         Action<string, string>? log)
     {
         Dictionary<string, MappingGuess> result = new();
+
+        if (_client == null || _modelId == null)
+        {
+            return result;
+        }
 
         try
         {

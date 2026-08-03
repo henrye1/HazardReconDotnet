@@ -55,6 +55,19 @@ public class CsvSnifferTests : IDisposable
     }
 
     [Fact]
+    public void TestHeadersAreDetectedEvenWhenHalfTheColumnsAreTextIdentifiers()
+    {
+        // account/customer numbers ("A1", "C1") are neither numeric nor date-like,
+        // so a naive header heuristic under-counts them and misses the header row
+        string path = WriteFile("LoanAccountNumber,CustomerId,Amount,ReportDate\nA1,C1,100,2026-04-30\n");
+
+        CsvSniff sniff = CsvSniffer.Sniff(path);
+
+        Assert.True(sniff.HasHeaders);
+        Assert.Equal(new[] { "LoanAccountNumber", "CustomerId", "Amount", "ReportDate" }, sniff.Headers);
+    }
+
+    [Fact]
     public void TestAnEmptyFileHasNoHeadersAndNoSamples()
     {
         string path = WriteFile("");

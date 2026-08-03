@@ -18,16 +18,11 @@ using Xunit;
 namespace HazardRecon.Tests.Web;
 
 /// <summary>
-/// Drives POST /api/discover with a real multipart body.
-///
-/// The unit tests cover the receiver in isolation; what only a real request can
-/// show is whether the folder structure survives the wire at all - the relative
-/// path rides in the Content-Disposition filename, and a framework that stripped
-/// the directory part would quietly flatten every upload.
+/// Drives POST /api/discover with a real multipart body tagging each file by
+/// set index and role (set{N}.{kind}), the contract SetFileReceiver expects.
 /// </summary>
 public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFactory>
 {
-    /// <summary>Accepts every request, so the upload path is what is under test.</summary>
     private class AlwaysOnHandler : AuthenticationHandler<AuthenticationSchemeOptions>
     {
         public AlwaysOnHandler(IOptionsMonitor<AuthenticationSchemeOptions> options,
@@ -44,8 +39,8 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
     public class AuthedFactory : WebApplicationFactory<Program>
     {
-        /// <summary>Shared so a test can inspect what the endpoint recorded.</summary>
         public FakeRunStore RunStore { get; } = new();
+        public FakeColumnMappingStore MappingStore { get; } = new();
 
         protected override IHost CreateHost(IHostBuilder builder)
         {
@@ -68,14 +63,14 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
                     o.DefaultScheme = "Test";
                 });
 
-                // in-memory stores: this suite is about the upload path, not
-                // about reaching a real Supabase project
                 services.RemoveAll<IRunStore>();
                 services.RemoveAll<IRunFileStore>();
                 services.RemoveAll<IFileStore>();
+                services.RemoveAll<IColumnMappingStore>();
                 services.AddSingleton<IRunStore>(RunStore);
                 services.AddSingleton<IRunFileStore>(new FakeRunFileStore());
                 services.AddSingleton<IFileStore>(new FakeFileStore());
+                services.AddSingleton<IColumnMappingStore>(MappingStore);
             });
 
             return base.CreateHost(builder);
@@ -86,97 +81,51 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
     public UploadEndpointTests(AuthedFactory factory) => _factory = factory;
 
-    private static void AddFile(MultipartFormDataContent form, string field, string relativePath, string body)
+    private static void AddFile(MultipartFormDataContent form, int setIndex, string kind, string fileName, string body)
     {
         ByteArrayContent content = new(Encoding.UTF8.GetBytes(body));
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        // the relative path rides here, exactly as the browser sends it
-        form.Add(content, field, relativePath);
+        form.Add(content, $"set{setIndex}.{kind}", fileName);
     }
 
-    [Fact]
-    public async Task TestAnUploadedFolderIsDiscoveredAsASet()
+    private static void AddFullSet(MultipartFormDataContent form, int setIndex, string exposureName = "IFRS9 FILE.csv")
     {
-        HttpClient client = _factory.CreateClient();
-
-        using MultipartFormDataContent form = new();
-        AddFile(form, "set0", "DEBUG FILE 30 JUNE 2026 0.5 PERCENT/lgd_defaults.csv",
-            "account,exposure\nA1,100\n");
-        AddFile(form, "set0", "DEBUG FILE 30 JUNE 2026 0.5 PERCENT/write-off.csv",
-            "account,amount\nA1,100\n");
-
-        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
-        string body = await response.Content.ReadAsStringAsync();
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        // the folder name survived the round trip, so the discoverer could derive
-        // a set from it - a flattened upload would have found nothing
-        Assert.Contains("run_id", body);
-        Assert.Contains("JUN2026 0.5PCT", body);
-        Assert.Contains("lgd_defaults.csv", body);
+        AddFile(form, setIndex, "exposure", exposureName, "A1,2026-06-30,100,Stage 2\n");
+        AddFile(form, setIndex, "writeoff", "WRITEOFF.csv", "LoanAccountNumber,CustomerId,Amount,ReportDate\nA1,C1,100,2026-04-30\n");
+        // deliberately not a real zip: these tests only care about upload/run
+        // bookkeeping, not full discovery - InputDiscoverer.BuildSet fails to
+        // extract it and reports the set as having no analysis data, which is
+        // fine here (see TestTheResponseIncludesMappingDataForBothCsvFiles for
+        // the one test that needs discovery to actually succeed).
+        AddFile(form, setIndex, "debug", "debug.zip", "zipbytes");
+        AddFile(form, setIndex, "scenario", "scenario.json", "{}");
     }
 
-    [Fact]
-    public async Task TestTwoFoldersBecomeTwoSets()
+    /// <summary>Loose (not zipped) debug files so InputDiscoverer.BuildSet actually finds lgd_defaults.csv.</summary>
+    private static void AddDiscoverableSet(MultipartFormDataContent form, int setIndex, string exposureName = "IFRS9 FILE.csv")
     {
-        HttpClient client = _factory.CreateClient();
-
-        using MultipartFormDataContent form = new();
-        AddFile(form, "set0", "JAN 2026/lgd_defaults.csv", "account\nA1\n");
-        AddFile(form, "set1", "FEB 2026/lgd_defaults.csv", "account\nB1\n");
-
-        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
-        string body = await response.Content.ReadAsStringAsync();
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains("JAN2026", body);
-        Assert.Contains("FEB2026", body);
+        AddFile(form, setIndex, "exposure", exposureName, "A1,2026-06-30,100,Stage 2\n");
+        AddFile(form, setIndex, "writeoff", "WRITEOFF.csv", "LoanAccountNumber,CustomerId,Amount,ReportDate\nA1,C1,100,2026-04-30\n");
+        AddFile(form, setIndex, "debug", "lgd_defaults.csv", "AccountNumber,EventType,CohortDate,Bucket,Rating,Amount\nA1,Lifetime,2026-05-31,0,5,100.0\n");
+        AddFile(form, setIndex, "debug", "pd_scored.csv", "AccountNumber,Category1,ReportDate,BucketRating,NextBucketRating,DeltaLambda\nA1,Loans,2026-01-31,1,2,0.1\n");
+        AddFile(form, setIndex, "debug", "debug.json", "{}");
+        AddFile(form, setIndex, "scenario", "scenario.json", "{}");
     }
 
     [Fact]
-    public async Task TestATraversingFilenameIsRejected()
-    {
-        HttpClient client = _factory.CreateClient();
-
-        using MultipartFormDataContent form = new();
-        AddFile(form, "set0", "../../escaped.csv", "pwned");
-
-        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
-        string body = await response.Content.ReadAsStringAsync();
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("unsafe", body, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task TestAnUnknownFieldNameIsRejected()
-    {
-        HttpClient client = _factory.CreateClient();
-
-        using MultipartFormDataContent form = new();
-        AddFile(form, "notaset", "x/y.csv", "data");
-
-        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task TestTheRunIsRecordedAgainstTheCaller()
+    public async Task TestAnUploadedSetIsRecordedAgainstTheCaller()
     {
         HttpClient client = _factory.CreateClient();
         int before = _factory.RunStore.Runs.Count;
 
         using MultipartFormDataContent form = new();
-        AddFile(form, "set0", "MAR 2026/lgd_defaults.csv", "account\nC1\n");
+        AddFullSet(form, 0, "MAR 2026.csv");
 
         HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        // the row is what makes the run survive a restart; without it the
-        // database stays empty however many runs are started
+        Assert.Contains("run_id", body);
         Assert.Equal(before + 1, _factory.RunStore.Runs.Count);
 
         RunRecord run = _factory.RunStore.Runs[^1];
@@ -185,14 +134,77 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     }
 
     [Fact]
-    public async Task TestTheRunIdIsTheDatabaseId()
+    public async Task TestTheResponseIncludesMappingDataForBothCsvFiles()
     {
-        // artifact paths and every later lookup key off this, so a locally
-        // invented id would orphan the row
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent form = new();
-        AddFile(form, "set0", "APR 2026/lgd_defaults.csv", "account\nD1\n");
+        AddDiscoverableSet(form, 0);
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("\"writeoff\"", body);
+        Assert.Contains("\"exposure\"", body);
+        // the write-off file's real headers were matched by name, no AI guess needed
+        Assert.Contains("header_match", body);
+    }
+
+    [Fact]
+    public async Task TestTwoSetsBecomeTwoInventoryEntries()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddFullSet(form, 0, "JAN 2026.csv");
+        AddFullSet(form, 1, "FEB 2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("JAN 2026", body);
+        Assert.Contains("FEB 2026", body);
+    }
+
+    [Fact]
+    public async Task TestAMissingRequiredFileIsRejected()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddFile(form, 0, "writeoff", "WRITEOFF.csv", "a,b\n1,2\n");
+        AddFile(form, 0, "debug", "debug.zip", "zipbytes");
+        AddFile(form, 0, "scenario", "scenario.json", "{}");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("exposure", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestAnUnknownFieldNameIsRejected()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddFile(form, 0, "notakind", "x.csv", "data");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TestTheRunIdIsTheDatabaseId()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddFullSet(form, 0, "APR 2026.csv");
 
         HttpResponseMessage response = await client.PostAsync("/api/discover", form);
         string body = await response.Content.ReadAsStringAsync();
@@ -209,7 +221,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         try
         {
             using MultipartFormDataContent form = new();
-            AddFile(form, "set0", "MAY 2026/lgd_defaults.csv", "account\nE1\n");
+            AddFullSet(form, 0, "MAY 2026.csv");
 
             HttpResponseMessage response = await client.PostAsync("/api/discover", form);
             string body = await response.Content.ReadAsStringAsync();
@@ -224,9 +236,22 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     }
 
     [Fact]
+    public async Task TestAnEmptyUploadIsRejected()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("at least one", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task TestAnotherUsersRunIsReportedMissingNotForbidden()
     {
-        // a 403 would confirm the run exists; 404 tells an outsider nothing
         HttpClient client = _factory.CreateClient();
 
         HttpResponseMessage response = await client.GetAsync($"/api/runs/{Guid.NewGuid()}");
@@ -239,7 +264,6 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     {
         HttpClient client = _factory.CreateClient();
 
-        // a run belonging to somebody else must never appear
         await _factory.RunStore.CreateAsync(Guid.NewGuid(), new[] { "SOMEONE ELSE" });
 
         HttpResponseMessage response = await client.GetAsync("/api/runs");
@@ -247,19 +271,5 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.DoesNotContain("SOMEONE ELSE", body);
-    }
-
-    [Fact]
-    public async Task TestAnEmptyUploadIsRejected()
-    {
-        HttpClient client = _factory.CreateClient();
-
-        using MultipartFormDataContent form = new();
-
-        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
-        string body = await response.Content.ReadAsStringAsync();
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("at least one", body, StringComparison.OrdinalIgnoreCase);
     }
 }

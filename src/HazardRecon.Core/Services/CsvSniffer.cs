@@ -65,12 +65,20 @@ public static class CsvSniffer
         return headerLike > cols / 2;
     }
 
+    /// <summary>
+    /// A column name is a pure word (letters, spaces, underscores) - an account
+    /// or customer identifier like "A1" or "C1" is not a number or a date, but
+    /// it does carry a digit, which no realistic header label does. Without
+    /// this, a file with two numeric/date columns and two identifier columns
+    /// out of four never crosses the majority threshold below.
+    /// </summary>
     private static bool LooksLikeData(string value)
     {
         value = value.Trim();
         if (value.Length == 0) return false;
         if (double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out _)) return true;
         if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out _)) return true;
+        if (value.Any(char.IsDigit)) return true;
         return false;
     }
 }
