@@ -129,6 +129,13 @@ public class SupabaseRunStore : IRunStore
         await _rest.SendAsync(HttpMethod.Post, RpcSaveCompletion, Json(body), null, ct);
     }
 
+    public async Task DeleteAsync(Guid runId, Guid userId, CancellationToken ct = default)
+    {
+        // scoped to the owner for the same reason GetAsync is: someone else's run
+        // must behave exactly like one that does not exist
+        await _rest.SendAsync(HttpMethod.Delete, $"{Table}?id=eq.{runId}&user_id=eq.{userId}", null, null, ct);
+    }
+
     public async Task<int> CountSinceAsync(Guid userId, DateTimeOffset since, CancellationToken ct = default)
     {
         // escaped: an unescaped '+' in the offset would arrive at PostgREST as a space

@@ -37,6 +37,14 @@ public interface IRunStore
         IReadOnlyList<RunCommentaryLineRecord> commentaryLines,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// Removes the run itself. Every child table - files, logs, results, chat,
+    /// per-run column maps - is declared "on delete cascade" from runs(id), so
+    /// this one statement takes the whole record with it. Filtered by owner as
+    /// well as id, so another user's run is a no-op rather than a deletion.
+    /// </summary>
+    Task DeleteAsync(Guid runId, Guid userId, CancellationToken ct = default);
+
     Task<int> CountSinceAsync(Guid userId, DateTimeOffset since, CancellationToken ct = default);
 
     /// <summary>

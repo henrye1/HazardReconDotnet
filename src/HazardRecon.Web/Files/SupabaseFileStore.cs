@@ -65,10 +65,15 @@ public class SupabaseFileStore : IFileStore
             }
         }
 
-        if (paths.Count == 0) return;
+        await DeletePathsAsync(paths, ct);
+    }
+
+    public async Task DeletePathsAsync(IReadOnlyList<string> storagePaths, CancellationToken ct = default)
+    {
+        if (storagePaths.Count == 0) return;
 
         await _rest.SendAsync(HttpMethod.Delete,
             $"/storage/v1/object/{_bucket}",
-            Json(new { prefixes = paths }), null, ct);
+            Json(new { prefixes = storagePaths }), null, ct);
     }
 }

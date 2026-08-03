@@ -28,12 +28,37 @@ public class FakeFileStore : IFileStore
     public Task<string> CreateSignedUrlAsync(string storagePath, int expiresInSeconds, CancellationToken ct = default) =>
         Task.FromResult($"https://storage.example/{storagePath}?token=signed&exp={expiresInSeconds}");
 
+    public List<string> DeletedPaths { get; } = new();
+
+    /// <summary>Storage paths containing this fragment throw on delete.</summary>
+    public string? FailDeletesContaining { get; set; }
+
     public Task DeletePrefixAsync(string prefix, CancellationToken ct = default)
     {
+        if (FailDeletesContaining != null && prefix.Contains(FailDeletesContaining))
+        {
+            throw new IOException($"delete refused for {prefix}");
+        }
+
         DeletedPrefixes.Add(prefix);
         foreach (string key in Objects.Keys.Where(k => k.StartsWith(prefix)).ToList())
         {
             Objects.Remove(key);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task DeletePathsAsync(IReadOnlyList<string> storagePaths, CancellationToken ct = default)
+    {
+        foreach (string path in storagePaths)
+        {
+            if (FailDeletesContaining != null && path.Contains(FailDeletesContaining))
+            {
+                throw new IOException($"delete refused for {path}");
+            }
+
+            DeletedPaths.Add(path);
+            Objects.Remove(path);
         }
         return Task.CompletedTask;
     }
@@ -121,6 +146,19 @@ public class FakeRunStore : IRunStore
         SavedCommentaryLines.Clear();
         SavedCommentaryLines.AddRange(commentaryLines);
 
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Makes DeleteAsync throw, to exercise a failed delete.</summary>
+    public Guid? FailDeleteFor { get; set; }
+
+    public Task DeleteAsync(Guid runId, Guid userId, CancellationToken ct = default)
+    {
+        if (FailDeleteFor == runId) throw new InvalidOperationException("delete refused");
+
+        // the real table cascades to every child, and RunRecord carries its
+        // children inline, so dropping the row drops them here too
+        Runs.RemoveAll(r => r.Id == runId && r.UserId == userId);
         return Task.CompletedTask;
     }
 

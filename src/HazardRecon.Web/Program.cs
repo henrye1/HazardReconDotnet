@@ -839,6 +839,45 @@ app.MapGet("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
     });
 }).RequireAuthorization();
 
+// DELETE /api/runs/{rid} - removes a run for good: its stored objects, its
+// working folder and its row, which cascades to every child table. Offered from
+// the run list and the run detail, both behind a confirmation.
+app.MapDelete("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
+{
+    Guid? deleteUser = SupabaseJwt.UserId(ctx.User);
+    if (deleteUser == null) return Results.Unauthorized();
+
+    if (!Guid.TryParse(rid, out Guid runId)) return Results.NotFound(new { error = "Unknown run" });
+
+    // 404 rather than 403 for someone else's run, as everywhere else here
+    RunRecord? run = await runStore.GetAsync(runId, deleteUser.Value);
+    if (run == null) return Results.NotFound(new { error = "Unknown run" });
+
+    // A live run's background task is still writing into the folder this would
+    // delete underneath it, so it is refused rather than raced. The status in the
+    // job cache is the live one; the stored row can lag a moment behind it.
+    bool running = jobs.TryGetValue(rid, out JobState? job)
+        ? job.Status == RunStatus.Running
+        : run.Status == RunStatus.Running;
+
+    if (running)
+    {
+        return Results.Conflict(new
+        {
+            error = "This run is still going. Wait for it to finish, then delete it."
+        });
+    }
+
+    await new RunDeleter(runStore, runFileStore, fileStore, runsDir)
+        .DeleteAsync(runId, deleteUser.Value, ctx.RequestAborted);
+
+    // last, so a failure above leaves the run listed and deletable again rather
+    // than stranding a cache entry pointing at a record that is gone
+    jobs.TryRemove(rid, out _);
+
+    return Results.Ok(new { ok = true });
+}).RequireAuthorization();
+
 // POST /api/session - hands the verified token back as a cookie so the browser
 // can load the dashboard iframe and the artifact links, which cannot carry an
 // Authorization header. Scoped to /runs, so it is never sent to the JSON API.

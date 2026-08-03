@@ -785,6 +785,37 @@ table.heat td.cohort{padding:9px 8px;text-align:right;white-space:nowrap;
   color:var(--cl-text-color);
 }
 
+/* ---------- delete confirmation ---------- */
+/* above the drawer (40) and below the auth gate (50): signing out must never end
+   up behind a dialog */
+.modal{
+  position:fixed;inset:0;z-index:45;background:rgba(11,24,143,.45);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+}
+.modalcard{
+  width:min(460px,100%);background:#fff;border-radius:var(--border-radius);
+  box-shadow:0 2px 5px rgba(0,0,0,.30);overflow:hidden;
+}
+.modalcard .cardhead .mt{display:inline-flex;align-items:center;gap:10px}
+.modalcard .cbody{margin:0;font-size:14px;line-height:1.6;text-wrap:pretty}
+.modalfoot{display:flex;justify-content:flex-end;gap:12px;padding:0 20px 20px}
+
+/* the one destructive action in the app, so it is the only red button */
+.btn.danger{background:var(--cl-error-color);border-color:var(--cl-error-color);color:#fff}
+.btn.danger:hover{background:#b00101}
+.btn.danger:disabled:hover{background:var(--cl-error-color)}
+/* quiet until hovered, so it does not compete with Run again beside it */
+.btn.quiet{color:var(--cl-off-text-color)}
+.btn.quiet:hover{color:var(--cl-error-color);border-color:var(--cl-error-color)}
+
+/* ---------- run row actions ---------- */
+.rowacts{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.rowdel{
+  border:0;background:transparent;padding:5px;cursor:pointer;display:flex;
+  color:var(--cl-off-text-color);border-radius:var(--border-radius);
+}
+.rowdel:hover{color:var(--cl-error-color);background:var(--cl-hover-color)}
+
 /* ---------- auth gate ---------- */
 .authgate{
   position:fixed;inset:0;z-index:50;background:var(--cl-primary-color);

@@ -362,6 +362,12 @@ function renderHistoryRows() {
       const go = done
         ? `<span class="ms-icon rowgo" title="Open this run">arrow_forward</span>`
         : "";
+      // a live run is still writing its own folder, so the server refuses to
+      // delete it - no point offering the button
+      const del = r.status === "running"
+        ? ""
+        : `<button class="rowdel" data-del="${r.id}" title="Delete run">` +
+          `<span class="ms-icon" style="font-size:20px">delete</span></button>`;
 
       return `<tr${done ? ` class="clickable" data-run="${r.id}"` : ""}>` +
              `<td><div class="runid"><b>${runRef(r.id)}</b><span>${labels}</span></div></td>` +
@@ -372,11 +378,18 @@ function renderHistoryRows() {
              `<td class="num untraced${done && r.untraced > 0 ? " no" : ""}">${untraced}</td>` +
              `<td class="num">${exceptions}</td>` +
              `<td class="num dur">${duration(r)}</td>` +
-             `<td class="num">${go}</td></tr>`;
+             `<td><div class="rowacts">${del}${go}</div></td></tr>`;
     }).join("") + "</tbody>";
 
   Array.from($("#history-table").querySelectorAll("tr.clickable"))
     .forEach(tr => tr.addEventListener("click", () => openRun(tr.getAttribute("data-run"))));
+
+  // stops the row's own click: deleting a run must not also open it
+  Array.from($("#history-table").querySelectorAll("button[data-del]")).forEach(btn =>
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      askDelete(btn.getAttribute("data-del"));
+    }));
 }
 
 /* Reopens a stored run: its summaries, downloads and dashboard come back from
@@ -399,6 +412,82 @@ function openRun(id) {
         m.role === "user" ? escapeHtml(m.content) : (m.content_html || escapeHtml(m.content))));
     });
 }
+
+/* ---------- deleting a run ---------- */
+
+/* The run the open confirmation is about. Null whenever it is closed, which is
+   also what stops a stray Enter or a second click deleting anything. */
+let DELETE_ID = null;
+
+function askDelete(id) {
+  if (!id) return;
+  DELETE_ID = id;
+  $("#confirm-title").textContent = `Delete run ${runRef(id)}?`;
+  $("#confirm-error").classList.add("hide");
+  $("#confirm-error").textContent = "";
+  $("#btn-confirm-delete").disabled = false;
+  $("#btn-confirm-delete-tx").textContent = "Delete run";
+  $("#confirm-delete").classList.remove("hide");
+  $("#btn-confirm-cancel").focus();
+}
+
+function closeDelete() {
+  DELETE_ID = null;
+  $("#confirm-delete").classList.add("hide");
+}
+
+function doDelete() {
+  if (!DELETE_ID) return;
+  const id = DELETE_ID;
+
+  $("#btn-confirm-delete").disabled = true;
+  $("#btn-confirm-delete-tx").textContent = "Deleting...";
+  $("#confirm-error").classList.add("hide");
+
+  api("/api/runs/" + id, { method: "DELETE" })
+    .then(readJson)
+    .then(({ ok, status, j }) => {
+      if (!ok) {
+        // a run that started between drawing the list and clicking delete comes
+        // back as a conflict, which is worth reading rather than swallowing
+        throw new Error((j && j.error) ||
+          (status === 409
+            ? "This run is still going. Wait for it to finish, then delete it."
+            : `Could not delete the run (server returned ${status}).`));
+      }
+
+      // the run on screen is the one that just went, so nothing may still be
+      // polling it or offering its results
+      if (RUN_ID === id) {
+        stopPolling();
+        RUN_ID = null;
+        RESULT = null;
+        DETAIL_LOG = [];
+        $("#chat-log").innerHTML = "";
+      }
+
+      closeDelete();
+      showScreen("runs");
+      return loadHistory();
+    })
+    .catch(e => {
+      $("#confirm-error").textContent = e.message;
+      $("#confirm-error").classList.remove("hide");
+      $("#btn-confirm-delete").disabled = false;
+      $("#btn-confirm-delete-tx").textContent = "Delete run";
+    });
+}
+
+$("#btn-confirm-cancel").addEventListener("click", closeDelete);
+$("#btn-confirm-delete").addEventListener("click", doDelete);
+// the backdrop, but not the card sitting on it
+$("#confirm-delete").addEventListener("click", e => {
+  if (e.target === $("#confirm-delete")) closeDelete();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && DELETE_ID) closeDelete();
+});
+$("#btn-delete-run").addEventListener("click", () => askDelete(RUN_ID));
 
 /* ---------- step 1: the input files, one slot per role ---------- */
 const MAX_SETS = 4;

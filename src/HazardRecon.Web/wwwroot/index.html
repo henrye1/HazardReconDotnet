@@ -347,8 +347,11 @@
             <p class="dhmeta" id="detail-meta"></p>
           </div>
           <div class="dhacts">
+            <button class="btn quiet" id="btn-delete-run" title="Delete this run">
+              <span class="ms-icon" style="font-size:20px">delete</span>Delete run
+            </button>
             <button class="btn" id="btn-rerun"
-                    title="Run the reconciliation again on the same folders">
+                    title="Run the reconciliation again on the same files">
               <span class="ms-icon" style="font-size:20px">refresh</span>Run again
             </button>
             <button class="btn indigo" id="btn-chat-open">
@@ -464,6 +467,29 @@
       </div>
     </section>
 
+  </div>
+</div>
+
+<!-- ============ delete confirmation, over whichever screen is showing ============ -->
+<div class="modal hide" id="confirm-delete">
+  <div class="modalcard">
+    <div class="cardhead">
+      <span class="mt"><span class="ms-icon" style="font-size:20px">delete</span
+        ><span id="confirm-title">Delete this run?</span></span>
+    </div>
+    <div class="cardbody" style="display:grid;gap:10px">
+      <p class="cbody">This removes the run, its uploaded inputs and every generated output &mdash;
+        the workbook, memo and exception CSVs. It cannot be undone.</p>
+      <p class="hint" style="margin:0">Download anything you still need before deleting.</p>
+      <div class="err hide" id="confirm-error"></div>
+    </div>
+    <div class="modalfoot">
+      <button class="btn ghost" id="btn-confirm-cancel">Cancel</button>
+      <button class="btn danger big" id="btn-confirm-delete">
+        <span class="ms-icon" style="font-size:20px">delete</span>
+        <span id="btn-confirm-delete-tx">Delete run</span>
+      </button>
+    </div>
   </div>
 </div>
 
