@@ -67,6 +67,78 @@ public class CsvSnifferTests : IDisposable
         Assert.Equal(new[] { "LoanAccountNumber", "CustomerId", "Amount", "ReportDate" }, sniff.Headers);
     }
 
+    /// <summary>
+    /// Labels carrying digits used to be read as data, which cost the file its
+    /// header row and left the mapping step offering "Column 1, Column 2, ..."
+    /// instead of the names the user uploaded. IFRS9_* is the case that matters
+    /// most here, given what this tool reconciles.
+    /// </summary>
+    [Theory]
+    [InlineData("IFRS9_ACCOUNT,IFRS9_DATE,IFRS9_BALANCE\n8104227719,2026-06-30,44912.10\n")]
+    [InlineData("IFRS9_ACCOUNT,REPORT_DATE,BALANCE\n8104227719,2026-06-30,44912.10\n")]
+    [InlineData("AccountNumber,Q1_BAL,Q2_BAL\nA1,100,200\n")]
+    [InlineData("ACCOUNT,PD_12M,LGD_PCT\nA1,0.02,0.9\n")]
+    [InlineData("COL_1,COL_2,COL_3\nA1,100,2026-06-30\n")]
+    public void TestHeadersCarryingDigitsAreStillDetected(string content)
+    {
+        CsvSniff sniff = CsvSniffer.Sniff(WriteFile(content));
+
+        Assert.True(sniff.HasHeaders);
+        Assert.Equal(content.Split('\n')[0].Split(','), sniff.Headers);
+    }
+
+    [Fact]
+    public void TestATwoColumnFileWithOneTextValueIsStillHeadered()
+    {
+        // the old majority test needed both columns to look header-like, so a
+        // single non-numeric value column was enough to lose the header row
+        CsvSniff sniff = CsvSniffer.Sniff(WriteFile("ACCT,STATUS\nA1,ACTIVE\nA2,CLOSED\n"));
+
+        Assert.True(sniff.HasHeaders);
+        Assert.Equal(new[] { "ACCT", "STATUS" }, sniff.Headers);
+    }
+
+    [Fact]
+    public void TestAMonthNameLabelDoesNotDisqualifyTheHeaderRow()
+    {
+        // DateTime.TryParse accepts a bare "May", so a label like this would
+        // otherwise read as a date value and make the file look headerless
+        CsvSniff sniff = CsvSniffer.Sniff(WriteFile("ACCOUNT,May,June\nA1,100,200\n"));
+
+        Assert.True(sniff.HasHeaders);
+        Assert.Equal(new[] { "ACCOUNT", "May", "June" }, sniff.Headers);
+    }
+
+    [Fact]
+    public void TestARowCarryingANumberOrDateIsNeverAHeader()
+    {
+        // the stricter half of the rule: one real value in the first row means it
+        // is data, however word-like the rest of it looks
+        Assert.False(CsvSniffer.Sniff(WriteFile("ACCT,100,STATUS\nA2,200,X\n")).HasHeaders);
+        Assert.False(CsvSniffer.Sniff(WriteFile("ACCT,2026-06-30\nA2,2026-07-31\n")).HasHeaders);
+    }
+
+    [Fact]
+    public void TestAFileOfNothingButWordsIsReportedHeaderless()
+    {
+        // A known limit, asserted so it is a decision rather than a surprise:
+        // with no number, date or digit anywhere, nothing separates labels from
+        // values and the sniffer cannot tell. The mapping step then offers
+        // positional columns with sample values beside them.
+        CsvSniff sniff = CsvSniffer.Sniff(WriteFile("ACCT,BRANCH,PRODUCT\nAAA,JHB,HOMELOAN\n"));
+
+        Assert.False(sniff.HasHeaders);
+        Assert.Null(sniff.Headers);
+    }
+
+    [Fact]
+    public void TestABlankLeadingLineIsNotTreatedAsAHeader()
+    {
+        CsvSniff sniff = CsvSniffer.Sniff(WriteFile(",,\nA1,100,2026-06-30\n"));
+
+        Assert.False(sniff.HasHeaders);
+    }
+
     [Fact]
     public void TestAnEmptyFileHasNoHeadersAndNoSamples()
     {

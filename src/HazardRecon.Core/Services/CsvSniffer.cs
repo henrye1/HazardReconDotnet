@@ -38,7 +38,7 @@ public static class CsvSniffer
             return new CsvSniff(false, null, new List<IReadOnlyList<string>>());
         }
 
-        bool hasHeaders = rawRows.Count > 1 && LooksLikeHeader(rawRows[0], rawRows[1]);
+        bool hasHeaders = rawRows.Count > 1 && LooksLikeHeader(rawRows[0], rawRows.Skip(1).ToList());
 
         List<IReadOnlyList<string>> samples = (hasHeaders ? rawRows.Skip(1) : rawRows)
             .Take(sampleRowCount)
@@ -50,27 +50,58 @@ public static class CsvSniffer
         return new CsvSniff(hasHeaders, headers, samples);
     }
 
-    /// <summary>The first row looks like a header if, for most columns, its value fails as data while the next row's does not.</summary>
-    private static bool LooksLikeHeader(string[] firstRow, string[] secondRow)
+    /// <summary>
+    /// The first row is a header when nothing in it is itself a value, and the
+    /// rows below it do carry data.
+    ///
+    /// Asked per-column and by majority, as this once was, a headered file loses
+    /// its headers the moment a few labels carry digits - IFRS9_BALANCE, Q1_BAL,
+    /// PD_12M, COL_1 - because the digit rule in LooksLikeData was written for
+    /// data cells and misreads labels. Whether a cell is a *value* is the
+    /// stricter question, and one numeric or date cell anywhere in the first row
+    /// settles it: no real header row contains 44912.10 or 2026-06-30.
+    /// </summary>
+    private static bool LooksLikeHeader(string[] firstRow, IReadOnlyList<string[]> dataRows)
     {
-        int cols = Math.Min(firstRow.Length, secondRow.Length);
-        if (cols == 0) return false;
+        if (firstRow.Length == 0) return false;
 
-        int headerLike = 0;
-        for (int i = 0; i < cols; i++)
-        {
-            if (!LooksLikeData(firstRow[i]) && LooksLikeData(secondRow[i])) headerLike++;
-        }
+        // a blank leading line is not a header
+        if (firstRow.All(c => c.Trim().Length == 0)) return false;
 
-        return headerLike > cols / 2;
+        // one value in the first row and it is data, not labels
+        if (firstRow.Any(LooksLikeValue)) return false;
+
+        // and something below has to look like data, or this is a one-row file
+        // of words with nothing to tell labels from values
+        return dataRows.Any(row => row.Any(LooksLikeData));
     }
 
     /// <summary>
-    /// A column name is a pure word (letters, spaces, underscores) - an account
-    /// or customer identifier like "A1" or "C1" is not a number or a date, but
-    /// it does carry a digit, which no realistic header label does. Without
-    /// this, a file with two numeric/date columns and two identifier columns
-    /// out of four never crosses the majority threshold below.
+    /// A cell that is a value rather than a column label: it carries a digit and
+    /// parses as a number or a date.
+    ///
+    /// The digit requirement matters because DateTime.TryParse accepts bare month
+    /// names - "May", "March" - and a monthly export may well label a column
+    /// that way. Requiring a digit keeps such a label from being mistaken for a
+    /// date and disqualifying an otherwise obvious header row.
+    /// </summary>
+    private static bool LooksLikeValue(string value)
+    {
+        value = value.Trim();
+        if (value.Length == 0) return false;
+        if (!value.Any(char.IsDigit)) return false;
+
+        return double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out _)
+            || DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
+    }
+
+    /// <summary>
+    /// A cell that looks like data of any kind, including an identifier like
+    /// "A1" or "C1" that is neither a number nor a date but does carry a digit.
+    ///
+    /// Only ever asked of the rows *below* the first one, as positive evidence
+    /// that they are data. Asking it of the header row is what the digit rule
+    /// gets wrong - see LooksLikeHeader.
     /// </summary>
     private static bool LooksLikeData(string value)
     {
