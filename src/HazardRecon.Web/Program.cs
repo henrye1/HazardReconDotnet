@@ -687,17 +687,42 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     Guid? chatUser = SupabaseJwt.UserId(ctx.User);
     if (chatUser == null) return Results.Unauthorized();
 
-    if (string.IsNullOrEmpty(rid) || !jobs.TryGetValue(rid, out var job) || job.UserId != chatUser.Value)
+    if (string.IsNullOrEmpty(rid) || !Guid.TryParse(rid, out Guid chatRunGuid))
         return Results.NotFound(new { error = "Unknown run - please run reconciliation first." });
 
-    if (job.Status != "done")
+    // A run this process reconciled answers from what the engine just produced.
+    // Anything else - reopened from history, or every run once the server has
+    // restarted, since the job cache only ever holds this process's own runs -
+    // is rebuilt from the stored tables rather than refused.
+    string chatStatus;
+    string? runModel;
+    Dictionary<string, object> aggregates;
+
+    if (jobs.TryGetValue(rid, out var job) && job.UserId == chatUser.Value)
+    {
+        chatStatus = job.Status;
+        runModel = job.ModelId;
+        aggregates = job.AnalysisPayload ?? new Dictionary<string, object>();
+    }
+    else
+    {
+        RunRecord? storedRun = await runStore.GetAsync(chatRunGuid, chatUser.Value);
+        if (storedRun == null)
+            return Results.NotFound(new { error = "Unknown run - please run reconciliation first." });
+
+        chatStatus = storedRun.Status;
+        runModel = storedRun.ModelId;
+        aggregates = StoredAnalysisPayload.Build(storedRun);
+    }
+
+    if (chatStatus != RunStatus.Done)
         return Results.BadRequest(new { error = "This run has not finished yet." });
 
     if (string.IsNullOrEmpty(message))
         return Results.BadRequest(new { error = "Please enter a question." });
 
-    ChatService chatService = new(llm, ChatModel.Choose(job.ModelId, askedModel));
-    var chatRes = chatService.ProcessQuestion(message, job.AnalysisPayload ?? new Dictionary<string, object>());
+    ChatService chatService = new(llm, ChatModel.Choose(runModel, askedModel));
+    var chatRes = chatService.ProcessQuestion(message, aggregates);
     if (chatRes.IsError)
         return Results.Json(new { error = chatRes.ErrorMessage }, statusCode: 503);
 
@@ -705,17 +730,16 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     // record it must not turn a good reply into an error.
     try
     {
-        Guid chatRunId = Guid.Parse(rid);
         await chatStore.AddAsync(new[]
         {
             new ChatMessageRecord
             {
-                RunId = chatRunId, UserId = chatUser.Value,
+                RunId = chatRunGuid, UserId = chatUser.Value,
                 Role = "user", Content = message
             },
             new ChatMessageRecord
             {
-                RunId = chatRunId, UserId = chatUser.Value,
+                RunId = chatRunGuid, UserId = chatUser.Value,
                 Role = "assistant", Content = chatRes.Reply ?? "", ContentHtml = chatRes.ReplyHtml
             }
         });
