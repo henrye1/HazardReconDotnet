@@ -393,7 +393,12 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
 
         await columnMappingStore.RecordRunMappingAsync(runGuid, key, "exposure", exposureMapping);
 
-        CsvSniff exposureSniff = CsvSniffer.Sniff(files.ExposurePath);
+        // the sniffer's verdict unless the user overruled it in the mapping step,
+        // which decides both how the loaders address columns and which signature
+        // the reusable profile is filed under
+        bool exposureHasHeaders = ReadHasHeaders(setElem, "exposure") ?? files.ExposureHasHeaders;
+
+        CsvSniff exposureSniff = CsvSniffer.Reinterpret(CsvSniffer.Sniff(files.ExposurePath), exposureHasHeaders);
         string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
 
         await columnMappingStore.SaveMappingAsync(userId.Value, "exposure", exposureSignature, exposureMapping);
@@ -408,20 +413,33 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
 
             await columnMappingStore.RecordRunMappingAsync(runGuid, key, "writeoff", writeoffMapping);
 
-            CsvSniff writeoffSniff = CsvSniffer.Sniff(files.WriteOffPath);
+            bool writeoffHasHeaders = ReadHasHeaders(setElem, "writeoff") ?? files.WriteOffHasHeaders;
+
+            CsvSniff writeoffSniff = CsvSniffer.Reinterpret(CsvSniffer.Sniff(files.WriteOffPath), writeoffHasHeaders);
             string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
 
             await columnMappingStore.SaveMappingAsync(userId.Value, "writeoff", writeoffSignature, writeoffMapping);
 
-            writeOffMap = new ColumnMap(files.WriteOffHasHeaders, writeoffMapping);
+            writeOffMap = new ColumnMap(writeoffHasHeaders, writeoffMapping);
         }
 
         job.ColumnMaps[key] = new SetColumnMaps(
             writeOffMap,
-            new ColumnMap(files.ExposureHasHeaders, exposureMapping));
+            new ColumnMap(exposureHasHeaders, exposureMapping));
     }
 
     return Results.Ok(new { ok = true });
+
+    /// <summary>
+    /// The client's "first row is a header" answer for one file, as a sibling of
+    /// its mapping rather than a key inside it, so it cannot be mistaken for a
+    /// field name. Null when the client said nothing, which means keep the guess.
+    /// </summary>
+    static bool? ReadHasHeaders(JsonElement setElem, string fileKind) =>
+        setElem.TryGetProperty(fileKind + "_has_headers", out JsonElement flag)
+            && flag.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? flag.GetBoolean()
+                : null;
 
     static Dictionary<string, string> ReadMapping(JsonElement setElem, string fileKind)
     {

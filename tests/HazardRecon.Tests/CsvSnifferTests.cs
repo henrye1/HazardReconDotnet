@@ -139,6 +139,89 @@ public class CsvSnifferTests : IDisposable
         Assert.False(sniff.HasHeaders);
     }
 
+    /* ---------- Reinterpret: the user overruling the guess ---------- */
+
+    [Fact]
+    public void TestReadingAHeaderlessFileAsHeaderedPromotesItsFirstRow()
+    {
+        // the undecidable case: all words, so the sniffer says headerless and the
+        // user says otherwise
+        CsvSniff sniffed = CsvSniffer.Sniff(WriteFile("ACCT,BRANCH,PRODUCT\nAAA,JHB,HOMELOAN\nBBB,CPT,VAF\n"));
+        Assert.False(sniffed.HasHeaders);
+
+        CsvSniff headered = CsvSniffer.Reinterpret(sniffed, true);
+
+        Assert.True(headered.HasHeaders);
+        Assert.Equal(new[] { "ACCT", "BRANCH", "PRODUCT" }, headered.Headers);
+        // and the promoted row is no longer counted as data
+        Assert.Equal(2, headered.SampleRows.Count);
+        Assert.Equal(new[] { "AAA", "JHB", "HOMELOAN" }, headered.SampleRows[0]);
+    }
+
+    [Fact]
+    public void TestReadingAHeaderedFileAsDataDemotesItsHeaderRow()
+    {
+        CsvSniff sniffed = CsvSniffer.Sniff(WriteFile("LoanAccountNumber,Amount\nA1,100\nA2,200\n"));
+        Assert.True(sniffed.HasHeaders);
+
+        CsvSniff headerless = CsvSniffer.Reinterpret(sniffed, false);
+
+        Assert.False(headerless.HasHeaders);
+        Assert.Null(headerless.Headers);
+        // the header row comes back as the first data row, in file order
+        Assert.Equal(3, headerless.SampleRows.Count);
+        Assert.Equal(new[] { "LoanAccountNumber", "Amount" }, headerless.SampleRows[0]);
+        Assert.Equal(new[] { "A1", "100" }, headerless.SampleRows[1]);
+    }
+
+    [Fact]
+    public void TestAgreeingWithTheGuessChangesNothing()
+    {
+        CsvSniff sniffed = CsvSniffer.Sniff(WriteFile("LoanAccountNumber,Amount\nA1,100\n"));
+
+        Assert.Same(sniffed, CsvSniffer.Reinterpret(sniffed, true));
+    }
+
+    [Fact]
+    public void TestReinterpretingIsReversible()
+    {
+        // a user toggling twice must be back where they started, or the columns
+        // they mapped would shift underneath them
+        CsvSniff sniffed = CsvSniffer.Sniff(WriteFile("LoanAccountNumber,Amount\nA1,100\nA2,200\n"));
+
+        CsvSniff back = CsvSniffer.Reinterpret(CsvSniffer.Reinterpret(sniffed, false), true);
+
+        Assert.Equal(sniffed.HasHeaders, back.HasHeaders);
+        Assert.Equal(sniffed.Headers, back.Headers);
+        Assert.Equal(sniffed.SampleRows.Count, back.SampleRows.Count);
+        Assert.Equal(sniffed.SampleRows[0], back.SampleRows[0]);
+    }
+
+    [Fact]
+    public void TestTheSignatureFollowsTheChosenReading()
+    {
+        // what the override is for: a saved mapping is keyed on the column shape,
+        // and the two readings of one file are not the same shape
+        CsvSniff sniffed = CsvSniffer.Sniff(WriteFile("ACCT,BRANCH,PRODUCT\nAAA,JHB,HOMELOAN\n"));
+        CsvSniff headered = CsvSniffer.Reinterpret(sniffed, true);
+
+        string asData = ColumnSignature.Compute(sniffed.Headers, sniffed.SampleRows);
+        string asHeaders = ColumnSignature.Compute(headered.Headers, headered.SampleRows);
+
+        Assert.NotEqual(asData, asHeaders);
+    }
+
+    [Fact]
+    public void TestReinterpretingAnEmptyFileIsHarmless()
+    {
+        CsvSniff sniffed = CsvSniffer.Sniff(WriteFile(""));
+
+        CsvSniff headered = CsvSniffer.Reinterpret(sniffed, true);
+
+        Assert.False(headered.HasHeaders);
+        Assert.Empty(headered.SampleRows);
+    }
+
     [Fact]
     public void TestAnEmptyFileHasNoHeadersAndNoSamples()
     {

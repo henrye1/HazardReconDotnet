@@ -795,28 +795,36 @@ const FILE_KIND_TITLES = { writeoff: "Write-off file", exposure: "Exposure file"
 
 const editKey = (setKey, fileKind, field) => setKey + " " + fileKind + " " + field;
 
-/* The columns a field may be mapped to. A file with a header row is addressed by
-   header name; one without is addressed by 0-based index as a string, which is
-   what ColumnMap resolves against - so the option's value is the index, and only
-   its label is human-readable. */
-function mapColumns(view) {
+/* The file's rows as the file has them, header row included. Discovery splits
+   them according to its own guess - headers separately when it found some, all of
+   them in samples when it did not - so putting them back together is what lets
+   the header toggle redraw either way without another upload. CsvSniffer.Reinterpret
+   does the same on the server. */
+function mapRowsOf(view) {
   const samples = view.samples || [];
-  if (view.has_headers && view.headers) {
-    return view.headers.map((h, i) => ({
+  return view.has_headers && view.headers ? [view.headers].concat(samples) : samples;
+}
+
+/* The columns a field may be mapped to, for one reading of the file. With a
+   header row it is addressed by header name; without, by 0-based index as a
+   string, which is what ColumnMap resolves against - so the option's value is the
+   index and only its label is human-readable. */
+function columnsFor(rows, hasHeaders) {
+  if (hasHeaders) {
+    const headers = rows[0] || [];
+    const first = rows[1] || [];
+    return headers.map((h, i) => ({
       value: h,
       label: h || "(unnamed column " + (i + 1) + ")",
-      sample: (samples[0] || [])[i] || "",
+      sample: first[i] || "",
     }));
   }
 
-  const width = samples.reduce((n, r) => Math.max(n, (r || []).length), 0);
+  const width = rows.reduce((n, r) => Math.max(n, (r || []).length), 0);
+  const first = rows[0] || [];
   const columns = [];
   for (let i = 0; i < width; i++) {
-    columns.push({
-      value: String(i),
-      label: "Column " + (i + 1),
-      sample: (samples[0] || [])[i] || "",
-    });
+    columns.push({ value: String(i), label: "Column " + (i + 1), sample: first[i] || "" });
   }
   return columns;
 }
@@ -831,8 +839,10 @@ function buildMapFiles(j) {
         setKey: set.key,
         fileKind,
         title: FILE_KIND_TITLES[fileKind] + " · " + set.key,
+        // what discovery guessed, kept so the toggle can say when it was overruled
+        sniffedHasHeaders: !!view.has_headers,
         hasHeaders: !!view.has_headers,
-        columns: mapColumns(view),
+        fileRows: mapRowsOf(view),
         rows: (view.fields || []).map(f => ({
           field: f.field,
           note: f.note,
@@ -897,6 +907,32 @@ function showMapping(j) {
   $("#step-mapping").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+/* Flips one file between "row one is labels" and "row one is data".
+
+   The columns themselves do not move - only how they are addressed - so every
+   choice already made is carried across by position rather than thrown away: a
+   field on "AmountOutstanding" lands on that column's index, and one on index 2
+   lands on whatever header sits there. Each becomes the user's own, because the
+   provenance discovery reported was for the other reading of the file. */
+function setFileHasHeaders(file, hasHeaders) {
+  const before = columnsFor(file.fileRows, file.hasHeaders);
+  const after = columnsFor(file.fileRows, hasHeaders);
+
+  file.rows.forEach(row => {
+    const current = mappedColumn(file, row);
+    const key = editKey(file.setKey, file.fileKind, row.field);
+
+    if (!current) { MAP_EDITS[key] = ""; return; }
+
+    const at = before.findIndex(c => c.value === current);
+    // a column the file does not actually have cannot be carried over
+    MAP_EDITS[key] = at >= 0 && at < after.length ? after[at].value : "";
+  });
+
+  file.hasHeaders = hasHeaders;
+  renderMapping();
+}
+
 function renderMapping() {
   const host = $("#map-files");
   host.innerHTML = "";
@@ -905,19 +941,36 @@ function renderMapping() {
   let guessed = 0;
   let headerless = 0;
 
-  MAP_FILES.forEach(file => {
+  MAP_FILES.forEach((file, fileIdx) => {
     if (!file.hasHeaders) headerless += 1;
+
+    const columns = columnsFor(file.fileRows, file.hasHeaders);
+    const overruled = file.hasHeaders !== file.sniffedHasHeaders;
 
     const card = el("div", "card");
     const note = file.hasHeaders
       ? '<span class="okflag"><span class="ms-icon" style="font-size:18px">check_circle</span>' +
-        "Headers found &mdash; matched by name</span>"
+        (overruled ? "Read as headers &mdash; your choice" : "Headers found &mdash; matched by name") + "</span>"
       : '<span class="okflag ai"><span class="ms-icon" style="font-size:18px">auto_awesome</span>' +
-        "No header row &mdash; mapped by column</span>";
+        (overruled ? "Read as data &mdash; your choice" : "No header row &mdash; mapped by column") + "</span>";
     const head = el("div", "cardhead", "<span></span>" + note);
     // the title carries the set key, which came from an uploaded file's name
     head.firstChild.textContent = file.title;
     card.appendChild(head);
+
+    // Whether row one is labels or data is a guess, and for a file of nothing but
+    // words an undecidable one, so it is offered rather than imposed.
+    const toggleId = "map-hdr-" + fileIdx;
+    const toggle = el("div", "hdrtoggle", `
+      <input type="checkbox" id="${toggleId}"${file.hasHeaders ? " checked" : ""}>
+      <label for="${toggleId}">First row is a header</label>
+      <span class="hint" style="margin:0"></span>`);
+    const firstRow = (file.fileRows[0] || []).slice(0, 4).join(", ");
+    toggle.querySelector(".hint").textContent = firstRow
+      ? (file.hasHeaders ? "Read as column names: " : "Read as data: ") + firstRow
+      : "";
+    toggle.querySelector("input").addEventListener("change", () => setFileHasHeaders(file, !file.hasHeaders));
+    card.appendChild(toggle);
 
     const body = el("div", "maptable");
     const table = el("table", "grid tight maprows");
@@ -933,7 +986,7 @@ function renderMapping() {
           MAP_EDITS[editKey(file.setKey, file.fileKind, row.field)] === undefined) guessed += 1;
 
       const status = rowStatus(file, row);
-      const chosen = file.columns.find(c => c.value === column);
+      const chosen = columns.find(c => c.value === column);
 
       const tr = el("tr");
       tr.appendChild(el("td", "mapfield",
@@ -945,7 +998,7 @@ function renderMapping() {
       // every option's text is a column name out of the uploaded file, so each is
       // set as text - a header is data, and must never be read as markup
       sel.appendChild(option("", "— not mapped —"));
-      file.columns.forEach(c => sel.appendChild(option(c.value, c.label)));
+      columns.forEach(c => sel.appendChild(option(c.value, c.label)));
       // a saved or AI-guessed column can name something this file does not have,
       // so it is offered explicitly rather than silently falling back to blank
       if (column && !chosen) sel.appendChild(option(column, column + " (not in this file)"));
@@ -1012,6 +1065,10 @@ function mappingPayload() {
       const column = mappedColumn(file, row);
       if (column) mapping[row.field] = column;
     });
+    // sent alongside the mapping, never inside it: the server needs to know
+    // whether these columns are names or positions, and a saved profile is keyed
+    // on that reading of the file
+    set[file.fileKind + "_has_headers"] = file.hasHeaders;
   });
   return { run_id: RUN_ID, sets: Object.keys(bySet).map(k => bySet[k]) };
 }
@@ -1044,7 +1101,12 @@ $("#btn-confirm-map").addEventListener("click", () => {
     });
 });
 
-$("#btn-remap").addEventListener("click", () => { MAP_EDITS = {}; renderMapping(); });
+// back to everything discovery worked out, the header reading included
+$("#btn-remap").addEventListener("click", () => {
+  MAP_EDITS = {};
+  MAP_FILES.forEach(f => { f.hasHeaders = f.sniffedHasHeaders; });
+  renderMapping();
+});
 $("#btn-back-files").addEventListener("click", () => goStep(0));
 
 function showInventory(j) {

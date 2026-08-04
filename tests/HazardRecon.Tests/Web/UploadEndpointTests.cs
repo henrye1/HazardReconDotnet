@@ -83,6 +83,17 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
     public UploadEndpointTests(AuthedFactory factory) => _factory = factory;
 
+    /// <summary>
+    /// One field's column, or null if this mapping does not carry that field.
+    ///
+    /// The store is a class fixture, so a "does any recorded mapping say X?"
+    /// assertion runs its predicate over everything every test in here recorded -
+    /// including mappings for other fields. Indexing would throw on those instead
+    /// of simply not matching.
+    /// </summary>
+    private static string? Mapped(IReadOnlyDictionary<string, string> mapping, string field) =>
+        mapping.TryGetValue(field, out string? column) ? column : null;
+
     private static void AddFile(MultipartFormDataContent form, int setIndex, string kind, string fileName, string body)
     {
         ByteArrayContent content = new(Encoding.UTF8.GetBytes(body));
@@ -322,8 +333,8 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.NotEmpty(_factory.MappingStore.RunMappings);
-        Assert.Contains(_factory.MappingStore.RunMappings, m => m.FileKind == "writeoff" && m.Mapping["Amount"] == "Amount");
-        Assert.Contains(_factory.MappingStore.RunMappings, m => m.FileKind == "exposure" && m.Mapping["LoanAccountNumber"] == "0");
+        Assert.Contains(_factory.MappingStore.RunMappings, m => m.FileKind == "writeoff" && Mapped(m.Mapping, "Amount") == "Amount");
+        Assert.Contains(_factory.MappingStore.RunMappings, m => m.FileKind == "exposure" && Mapped(m.Mapping, "LoanAccountNumber") == "0");
         // the saved profile is also updated, so a future upload with this column shape reuses it
         Assert.NotEmpty(_factory.MappingStore.Saved);
     }
@@ -391,7 +402,88 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
         // no empty write-off row is written for a file that does not exist
         Assert.All(recorded, m => Assert.Equal("exposure", m.FileKind));
-        Assert.Contains(recorded, m => m.Mapping["LoanAccountNumber"] == "0");
+        Assert.Contains(recorded, m => Mapped(m.Mapping, "LoanAccountNumber") == "0");
+    }
+
+    [Fact]
+    public async Task TestOverridingTheHeaderReadingFilesTheProfileUnderADifferentSignature()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent discoverForm = new();
+        AddDiscoverableSet(discoverForm, 0, "HDR2026.csv");
+        HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
+        using JsonDocument doc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
+        string runId = doc.RootElement.GetProperty("run_id").GetString()!;
+        JsonElement mapping = doc.RootElement.GetProperty("mapping")[0];
+        string setKey = mapping.GetProperty("key").GetString()!;
+
+        // AddDiscoverableSet's write-off carries real headers, so this is the user
+        // overruling that and saying the first row is data
+        Assert.True(mapping.GetProperty("writeoff").GetProperty("has_headers").GetBoolean());
+
+        object BodyWith(bool writeoffHasHeaders) => new Dictionary<string, object>
+        {
+            ["run_id"] = runId,
+            ["sets"] = new[]
+            {
+                new Dictionary<string, object>
+                {
+                    ["key"] = setKey,
+                    ["writeoff"] = new Dictionary<string, string> { ["LoanAccountNumber"] = "0" },
+                    ["writeoff_has_headers"] = writeoffHasHeaders,
+                    ["exposure"] = new Dictionary<string, string> { ["LoanAccountNumber"] = "0" },
+                    ["exposure_has_headers"] = false
+                }
+            }
+        };
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsJsonAsync("/api/discover/mapping", BodyWith(false))).StatusCode);
+        var asData = _factory.MappingStore.Saved.Keys.Where(k => k.FileKind == "writeoff").ToList();
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsJsonAsync("/api/discover/mapping", BodyWith(true))).StatusCode);
+        var asHeaders = _factory.MappingStore.Saved.Keys.Where(k => k.FileKind == "writeoff").ToList();
+
+        // the second confirmation is filed under a signature the first did not use,
+        // because the two readings of the file are different column shapes
+        Assert.True(asHeaders.Count > asData.Count,
+            "overriding the header reading should key the saved profile differently");
+    }
+
+    [Fact]
+    public async Task TestTheHeaderReadingDefaultsToWhatWasSniffedWhenTheClientSaysNothing()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent discoverForm = new();
+        AddDiscoverableSet(discoverForm, 0, "HDRDEF2026.csv");
+        HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
+        using JsonDocument doc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
+        string runId = doc.RootElement.GetProperty("run_id").GetString()!;
+        string setKey = doc.RootElement.GetProperty("mapping")[0].GetProperty("key").GetString()!;
+
+        // no *_has_headers keys at all - an older client, or one that never toggled
+        var body = new
+        {
+            run_id = runId,
+            sets = new[]
+            {
+                new
+                {
+                    key = setKey,
+                    writeoff = new Dictionary<string, string> { ["Amount"] = "Amount" },
+                    exposure = new Dictionary<string, string> { ["LoanAccountNumber"] = "0" }
+                }
+            }
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/discover/mapping", body);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(_factory.MappingStore.RunMappings,
+            m => m.FileKind == "writeoff" && Mapped(m.Mapping, "Amount") == "Amount");
     }
 
     [Fact]

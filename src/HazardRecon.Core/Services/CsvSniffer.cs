@@ -51,6 +51,35 @@ public static class CsvSniffer
     }
 
     /// <summary>
+    /// The same file read as though its first row were, or were not, a header.
+    ///
+    /// The verdict below is a guess, and a file of nothing but words is genuinely
+    /// undecidable, so the mapping step lets the user overrule it. Everything
+    /// downstream then has to follow that choice rather than the guess: the column
+    /// signature a saved mapping is keyed on, and the ColumnMap that tells the
+    /// loaders whether to address columns by name or by position.
+    ///
+    /// The browser rebuilds the picker from the same two pieces the same way - see
+    /// mapRowsOf and columnsFor in app.js.
+    /// </summary>
+    public static CsvSniff Reinterpret(CsvSniff sniff, bool hasHeaders)
+    {
+        if (sniff.HasHeaders == hasHeaders) return sniff;
+
+        // back to the rows as the file has them: a sniffed header row is simply
+        // the first of them
+        List<IReadOnlyList<string>> rows = new();
+        if (sniff.Headers != null) rows.Add(sniff.Headers);
+        rows.AddRange(sniff.SampleRows);
+
+        if (rows.Count == 0) return new CsvSniff(false, null, rows);
+
+        return hasHeaders
+            ? new CsvSniff(true, rows[0].ToList(), rows.Skip(1).ToList())
+            : new CsvSniff(false, null, rows);
+    }
+
+    /// <summary>
     /// The first row is a header when nothing in it is itself a value, and the
     /// rows below it do carry data.
     ///
