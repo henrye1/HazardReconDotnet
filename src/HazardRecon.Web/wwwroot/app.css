@@ -771,6 +771,11 @@ table.heat td.cohort{padding:9px 8px;text-align:right;white-space:nowrap;
 .drawerfoot .note{font-size:11.5px;color:var(--cl-off-text-color);text-wrap:pretty}
 .btn.block{width:100%;justify-content:center;height:38px;text-decoration:none}
 
+/* the conversation's own model picker, for a run that skipped AI analysis */
+.chatmodel{display:grid;gap:6px}
+.chatmodel label{font-size:12px;color:var(--cl-off-text-color)}
+.chatmodel select{width:100%;height:40px;font-size:13px}
+
 .chatlog{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
 .bubble{
   max-width:88%;border-radius:var(--border-radius);padding:11px 13px;

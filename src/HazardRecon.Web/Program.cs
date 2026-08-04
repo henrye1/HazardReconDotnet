@@ -680,6 +680,10 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     string? rid = doc.RootElement.TryGetProperty("run_id", out var rProp) ? rProp.GetString() : null;
     string message = doc.RootElement.TryGetProperty("message", out var mProp) ? (mProp.GetString() ?? "").Trim() : "";
 
+    // a run reconciled without AI analysis has no model of its own, so the
+    // conversation carries the one the user picked in the drawer
+    string? askedModel = doc.RootElement.TryGetProperty("model_id", out var cmProp) ? cmProp.GetString() : null;
+
     Guid? chatUser = SupabaseJwt.UserId(ctx.User);
     if (chatUser == null) return Results.Unauthorized();
 
@@ -692,7 +696,7 @@ app.MapPost("/api/chat", async (HttpContext ctx) =>
     if (string.IsNullOrEmpty(message))
         return Results.BadRequest(new { error = "Please enter a question." });
 
-    ChatService chatService = new(llm, job.ModelId);
+    ChatService chatService = new(llm, ChatModel.Choose(job.ModelId, askedModel));
     var chatRes = chatService.ProcessQuestion(message, job.AnalysisPayload ?? new Dictionary<string, object>());
     if (chatRes.IsError)
         return Results.Json(new { error = chatRes.ErrorMessage }, statusCode: 503);

@@ -671,11 +671,15 @@ $("#btn-add-set").addEventListener("click", () => {
 // script, so there is nothing to put back. Run history replaces this.
 
 /* ---------- step 2: model ---------- */
-function addModelOption(value, label) {
+/* The models the gateway offered, kept so the conversation's own picker can be
+   filled from the same list the wizard's was, without a second round trip. */
+let MODELS = [];
+
+function addModelOption(sel, value, label) {
   const o = document.createElement("option");
   o.value = value;
   o.textContent = label;
-  $("#model").appendChild(o);
+  sel.appendChild(o);
   return o;
 }
 
@@ -689,24 +693,30 @@ function loadModels() {
   sel.innerHTML = "";
   sel.disabled = false;
   note.textContent = "";
-  addModelOption("", "Skip AI analysis");
+  addModelOption(sel, "", "Skip AI analysis");
   return api("/api/models")
     .then(readJson)
     .then(({ ok, j }) => {
       if (!ok || !Array.isArray(j)) {
         sel.disabled = true;
         note.textContent = (j && j.error) || "Model list unavailable - runs will skip AI analysis.";
+        MODELS = [];
+        fillChatModels();
         return;
       }
-      j.forEach(m => addModelOption(m.id, m.friendlyName));
+      j.forEach(m => addModelOption(sel, m.id, m.friendlyName));
       const saved = localStorage.getItem("hr_model") || "";
       sel.value = j.some(m => m.id === saved) ? saved : "";
       note.textContent = "Analysis adds roughly 25 seconds to a run and produces the memo " +
         "alongside the workbook.";
+      MODELS = j;
+      fillChatModels();
     })
     .catch(e => {
       sel.disabled = true;
       note.textContent = "Model list unavailable - " + e.message;
+      MODELS = [];
+      fillChatModels();
     });
 }
 
@@ -2091,9 +2101,57 @@ DETAIL_TABS.forEach(t => $("#tab-btn-" + t).addEventListener("click", () => show
 $("#btn-detail-back").addEventListener("click", () => showScreen("runs"));
 
 /* ---------- ask about this run ---------- */
+
+/* A run that had AI analysis answers with the model that wrote its memo. One
+   reconciled without it has none, so the conversation offers its own picker
+   rather than refusing the question. */
+function runHasModel() {
+  return !!(RESULT && RESULT.model_id);
+}
+
+function fillChatModels() {
+  const sel = $("#chat-model");
+  sel.innerHTML = "";
+  addModelOption(sel, "", "Choose a model…");
+  MODELS.forEach(m => addModelOption(sel, m.id, m.friendlyName));
+
+  // defaults to whatever they last ran with, which is nearly always what they want
+  const saved = localStorage.getItem("hr_model") || "";
+  sel.value = MODELS.some(m => m.id === saved) ? saved : "";
+  sel.disabled = MODELS.length === 0;
+
+  updateChatReady();
+}
+
+/* Shows the picker only when it is needed, and keeps Send in step with whether
+   anything can actually answer. */
+function updateChatReady() {
+  const own = runHasModel();
+  $("#chat-model-row").classList.toggle("hide", own);
+
+  if (!own) {
+    $("#chat-model-note").textContent = MODELS.length === 0
+      ? "No models are available, so this run cannot be asked about."
+      : "This run was reconciled without AI analysis, so choose a model to answer from its figures.";
+  }
+
+  $("#btn-chat").disabled = !(own || $("#chat-model").value);
+}
+
+/* The model the question goes to: the run's own, or the one picked here. */
+function chatModelId() {
+  return runHasModel() ? RESULT.model_id : ($("#chat-model").value || null);
+}
+
+$("#chat-model").addEventListener("change", () => {
+  localStorage.setItem("hr_model", $("#chat-model").value);
+  updateChatReady();
+});
+
 function setChatOpen(open) {
   $("#chat-drawer").classList.toggle("hide", !open);
-  if (open) $("#chat-input").focus();
+  // the run being asked about may have changed since this drawer last opened
+  if (open) { updateChatReady(); $("#chat-input").focus(); }
 }
 
 $("#btn-chat-open").addEventListener("click", () => setChatOpen(true));
@@ -2111,6 +2169,8 @@ function sendChat() {
   const input = $("#chat-input");
   const msg = input.value.trim();
   if (!msg || !RUN_ID) return;
+  // Enter sends, so the gate has to hold here too and not only on the button
+  if (!chatModelId()) { updateChatReady(); $("#chat-model").focus(); return; }
   addChatBubble("user", escapeHtml(msg));
   input.value = "";
   const btn = $("#btn-chat");
@@ -2118,7 +2178,7 @@ function sendChat() {
   const thinking = addChatBubble("bot thinking", "thinking&hellip;");
   api("/api/chat", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ run_id: RUN_ID, message: msg })
+    body: JSON.stringify({ run_id: RUN_ID, message: msg, model_id: chatModelId() })
   }).then(r => r.json().then(j => ({ ok: r.ok, j })))
     .then(({ ok, j }) => {
       thinking.remove();
@@ -2126,7 +2186,9 @@ function sendChat() {
       addChatBubble("bot", j.reply_html);
     })
     .catch(() => { thinking.remove(); addChatBubble("bot err", "Network error - please try again."); })
-    .finally(() => { btn.disabled = false; input.disabled = false; input.focus(); });
+    // updateChatReady owns the button, so a run with nothing to answer with does
+    // not get Send handed back to it
+    .finally(() => { input.disabled = false; updateChatReady(); input.focus(); });
 }
 
 $("#btn-chat").addEventListener("click", sendChat);

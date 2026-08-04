@@ -508,6 +508,13 @@
   </div>
   <div class="chatlog" id="chat-log"></div>
   <div class="drawerfoot">
+    <!-- only for a run that skipped AI analysis, and so has no model of its own -->
+    <div class="chatmodel hide" id="chat-model-row">
+      <label for="chat-model">Model for this conversation</label>
+      <select id="chat-model"></select>
+      <span class="note" id="chat-model-note">This run was reconciled without AI analysis, so choose a
+        model to answer from its figures.</span>
+    </div>
     <textarea id="chat-input" class="chatbox" rows="3"
               placeholder="e.g. why is the 5&rarr;5 cell bigger than the default count?"></textarea>
     <button class="btn primary block" id="btn-chat">Send<span class="ms-icon"
