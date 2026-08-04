@@ -5,8 +5,12 @@ public enum SetFileKind { Exposure, Writeoff, Debug, Scenario }
 /// <summary>One uploaded file, tagged with the set and role the client picked it for.</summary>
 public record SetFileItem(int SetIndex, SetFileKind Kind, string OriginalFileName, Stream Content, long Length);
 
-/// <summary>Where a set landed on disk, and the original names of its two mappable files.</summary>
-public record ReceivedSet(string Root, string Label, string ExposureFileName, string WriteOffFileName, int FileCount, long Bytes);
+/// <summary>
+/// Where a set landed on disk, and the original names of its two mappable files.
+/// WriteOffFileName is null when the set was uploaded without one, which the
+/// engine tolerates - see SetFileReceiver's note on what that costs.
+/// </summary>
+public record ReceivedSet(string Root, string Label, string ExposureFileName, string? WriteOffFileName, int FileCount, long Bytes);
 
 public record SetReceiveOutcome(bool Ok, string? Error, IReadOnlyList<ReceivedSet> Sets)
 {
@@ -14,12 +18,19 @@ public record SetReceiveOutcome(bool Ok, string? Error, IReadOnlyList<ReceivedSe
 }
 
 /// <summary>
-/// Writes each set's four uploaded files under the canonical name
+/// Writes each set's uploaded files under the canonical name
 /// InputDiscoverer.BuildSet already looks for (IFRS9.csv, writeoff.csv,
 /// scenario.json), so discovery needs no changes even though the client no
 /// longer sends a folder tree - only debug-kind files keep their own names,
 /// since lgd_defaults.csv/pd_scored.csv/debug.json/debug.zip are fixed names
 /// from the source system, not something a bank renames.
+///
+/// Only the exposure file is required, matching what the engine actually
+/// insists on rather than being stricter than it. A set with no write-off file
+/// still reconciles: ReconciliationEngine treats the write-off population as
+/// empty, which skips check 2 entirely and leaves check 1 tracing defaults
+/// through the IFRS9 flag alone - a much lower trace rate. /api/discover says
+/// so in its problems list, which is where that warning belongs.
 /// </summary>
 public class SetFileReceiver
 {
@@ -60,9 +71,13 @@ public class SetFileReceiver
             string? exposureName = setItems.FirstOrDefault(i => i.Kind == SetFileKind.Exposure)?.OriginalFileName;
             string? writeoffName = setItems.FirstOrDefault(i => i.Kind == SetFileKind.Writeoff)?.OriginalFileName;
 
-            if (exposureName == null || writeoffName == null)
+            // The exposure file is the one the set cannot do without here: the
+            // set's label is taken from its name. The write-off file is not
+            // required, because the engine already copes without one - see the
+            // class note - and /api/discover warns about what that costs.
+            if (exposureName == null)
             {
-                return SetReceiveOutcome.Fail($"Set {setIndex + 1} is missing its exposure or write-off file.");
+                return SetReceiveOutcome.Fail($"Set {setIndex + 1} is missing its exposure file.");
             }
 
             string setRoot = Path.Combine(destinationRoot, setIndex.ToString());

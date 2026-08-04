@@ -10,7 +10,12 @@ internal record JobLogEntry(DateTimeOffset OccurredAt, string Message, string Ki
 /// Where a set's mappable files are on disk and whether each has a header row -
 /// populated once discovery runs, consumed once the mapping is confirmed.
 /// </summary>
-internal record MappableSetFiles(string WriteOffPath, bool WriteOffHasHeaders, string ExposurePath, bool ExposureHasHeaders);
+/// <summary>
+/// The two files a set may need a column mapping for. WriteOffPath is null when
+/// the set was uploaded without a write-off file, in which case there is nothing
+/// to map for it and no mapping to confirm.
+/// </summary>
+internal record MappableSetFiles(string? WriteOffPath, bool WriteOffHasHeaders, string ExposurePath, bool ExposureHasHeaders);
 
 internal class JobState
 {

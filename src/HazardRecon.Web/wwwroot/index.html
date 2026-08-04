@@ -204,9 +204,10 @@
               </div>
               <div class="req">
                 <span class="ms-icon">receipt_long</span>
-                <div><b>Write-off file</b>
+                <div><b>Write-off file<span class="opt">optional</span></b>
                   <span>One row per written-off account. Needs an account number, a customer id, an
-                    amount and a report date.</span></div>
+                    amount and a report date. Without it check 2 cannot run, and defaults can only
+                    trace through the IFRS9 flag &mdash; so expect far more untraced.</span></div>
               </div>
               <div class="req">
                 <span class="ms-icon">folder_zip</span>
@@ -217,7 +218,7 @@
               </div>
               <div class="req">
                 <span class="ms-icon">settings</span>
-                <div><b>Scenario file</b>
+                <div><b>Scenario file<span class="opt">optional</span></b>
                   <span>The hazard matrix and LGD term structures the engine ran with.
                     <code>debug.json</code> also works.</span></div>
               </div>

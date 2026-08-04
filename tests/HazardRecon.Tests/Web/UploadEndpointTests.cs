@@ -114,6 +114,17 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         AddFile(form, setIndex, "scenario", "scenario.json", "{}");
     }
 
+    /// <summary>The same, minus the write-off file the receiver no longer insists on.</summary>
+    private static void AddDiscoverableSetWithoutWriteOff(
+        MultipartFormDataContent form, int setIndex, string exposureName = "IFRS9 FILE.csv")
+    {
+        AddFile(form, setIndex, "exposure", exposureName, "A1,2026-06-30,100,Stage 2\n");
+        AddFile(form, setIndex, "debug", "lgd_defaults.csv", "AccountNumber,EventType,CohortDate,Bucket,Rating,Amount\nA1,Lifetime,2026-05-31,0,5,100.0\n");
+        AddFile(form, setIndex, "debug", "pd_scored.csv", "AccountNumber,Category1,ReportDate,BucketRating,NextBucketRating,DeltaLambda\nA1,Loans,2026-01-31,1,2,0.1\n");
+        AddFile(form, setIndex, "debug", "debug.json", "{}");
+        AddFile(form, setIndex, "scenario", "scenario.json", "{}");
+    }
+
     [Fact]
     public async Task TestAnUploadedSetIsRecordedAgainstTheCaller()
     {
@@ -315,6 +326,72 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         Assert.Contains(_factory.MappingStore.RunMappings, m => m.FileKind == "exposure" && m.Mapping["LoanAccountNumber"] == "0");
         // the saved profile is also updated, so a future upload with this column shape reuses it
         Assert.NotEmpty(_factory.MappingStore.Saved);
+    }
+
+    [Fact]
+    public async Task TestASetWithNoWriteOffFileDiscoversAndSaysWhatItCosts()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddDiscoverableSetWithoutWriteOff(form, 0, "NOWO2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using JsonDocument doc = JsonDocument.Parse(body);
+
+        // the mapping step is told there is nothing to map for the write-off,
+        // rather than being handed a half-built view of a file that is not there
+        JsonElement mapping = doc.RootElement.GetProperty("mapping")[0];
+        Assert.Equal(JsonValueKind.Null, mapping.GetProperty("writeoff").ValueKind);
+        Assert.Equal(JsonValueKind.Object, mapping.GetProperty("exposure").ValueKind);
+
+        // and the run is warned about the consequence, which is the whole reason
+        // the upload is allowed through
+        string problems = doc.RootElement.GetProperty("problems").ToString();
+        Assert.Contains("check 2", problems, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestConfirmingAMappingForASetWithNoWriteOffRecordsOnlyTheExposure()
+    {
+        HttpClient client = _factory.CreateClient();
+        int before = _factory.MappingStore.RunMappings.Count;
+
+        using MultipartFormDataContent discoverForm = new();
+        AddDiscoverableSetWithoutWriteOff(discoverForm, 0, "NOWOMAP2026.csv");
+        HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
+        using JsonDocument doc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
+        string runId = doc.RootElement.GetProperty("run_id").GetString()!;
+        string setKey = doc.RootElement.GetProperty("mapping")[0].GetProperty("key").GetString()!;
+
+        // the client sends no writeoff object, because it was given no table for one
+        var mappingBody = new
+        {
+            run_id = runId,
+            sets = new[]
+            {
+                new
+                {
+                    key = setKey,
+                    exposure = new Dictionary<string, string> { ["LoanAccountNumber"] = "0", ["AmountOutstanding"] = "2" }
+                }
+            }
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/discover/mapping", mappingBody);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var recorded = _factory.MappingStore.RunMappings.Skip(before)
+            .Where(m => m.RunId == Guid.Parse(runId)).ToList();
+
+        // no empty write-off row is written for a file that does not exist
+        Assert.All(recorded, m => Assert.Equal("exposure", m.FileKind));
+        Assert.Contains(recorded, m => m.Mapping["LoanAccountNumber"] == "0");
     }
 
     [Fact]

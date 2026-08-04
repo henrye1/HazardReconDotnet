@@ -98,6 +98,29 @@ public class SetFileReceiverTests : IDisposable
     }
 
     [Fact]
+    public async Task TestASetWithNoWriteOffFileIsAccepted()
+    {
+        // the engine copes without one - check 2 is skipped and check 1 traces
+        // through the IFRS9 flag alone - so the receiver does not stand in the way
+        SetReceiveOutcome result = await new SetFileReceiver().ReceiveAsync(_root, new[]
+        {
+            Item(0, SetFileKind.Exposure, "IFRS9 FILE JUNE 2026.csv", "a,b\n1,2\n"),
+            Item(0, SetFileKind.Debug, "lgd_defaults.csv"),
+            Item(0, SetFileKind.Scenario, "scenario.json"),
+        });
+
+        Assert.True(result.Ok, result.Error);
+        ReceivedSet set = Assert.Single(result.Sets);
+        Assert.Null(set.WriteOffFileName);
+        Assert.False(File.Exists(Path.Combine(set.Root, "writeoff.csv")));
+
+        // and the rest of the set still lands where discovery looks for it
+        Assert.True(File.Exists(Path.Combine(set.Root, "IFRS9.csv")));
+        Assert.True(File.Exists(Path.Combine(set.Root, "lgd_defaults.csv")));
+        Assert.Equal("IFRS9 FILE JUNE 2026", set.Label);
+    }
+
+    [Fact]
     public async Task TestNoFilesIsRefused()
     {
         SetReceiveOutcome result = await new SetFileReceiver().ReceiveAsync(_root, Array.Empty<SetFileItem>());

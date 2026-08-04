@@ -502,9 +502,11 @@ let MAX_SET_BYTES = 512 * 1024 * 1024;
    the server parses out of the form field name, so these strings are a contract
    with SetFileReceiver rather than labels - see /api/discover.
 
-   Only the scenario is optional: without an exposure or write-off file the
-   receiver rejects the set outright, and without the debug file there is no
-   lgd_defaults.csv, so discovery finds no set at all. */
+   Two are required, matching what the server insists on: the exposure file,
+   which the receiver rejects a set without, and the debug file, without which
+   there is no lgd_defaults.csv and discovery finds no set at all. The write-off
+   file and the scenario are optional, and the inventory step spells out what a
+   run gives up when either is missing. */
 const FILE_KINDS = [
   {
     key: "exposure", field: "Exposure", label: "Exposure file", icon: "assessment",
@@ -513,7 +515,8 @@ const FILE_KINDS = [
   },
   {
     key: "writeoff", field: "Writeoff", label: "Write-off file", icon: "receipt_long",
-    hint: "One row per written-off account", required: true, multiple: false,
+    hint: "One row per written-off account (optional, but check 2 needs it)",
+    required: false, multiple: false,
     accept: ".csv,text/csv",
   },
   {

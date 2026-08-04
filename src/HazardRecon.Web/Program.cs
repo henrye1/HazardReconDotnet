@@ -293,25 +293,24 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         if (string.IsNullOrEmpty(s.Scenario)) problems.Add($"{key}: scenario.json missing - no engine results.");
         if (string.IsNullOrEmpty(s.Ifrs9)) problems.Add($"{key}: no IFRS9 file - defaults can only trace to write-off.");
 
-        string writeOffPath = Path.Combine(rs.Root, "writeoff.csv");
+        // the write-off file is optional, so its canonical path may simply not be
+        // there - sniffing it regardless would throw and turn a supported upload
+        // into a 500
         string exposurePath = Path.Combine(rs.Root, "IFRS9.csv");
+        string writeOffCandidate = Path.Combine(rs.Root, "writeoff.csv");
+        string? writeOffPath = File.Exists(writeOffCandidate) ? writeOffCandidate : null;
 
-        CsvSniff writeoffSniff = CsvSniffer.Sniff(writeOffPath);
         CsvSniff exposureSniff = CsvSniffer.Sniff(exposurePath);
+        CsvSniff? writeoffSniff = writeOffPath == null ? null : CsvSniffer.Sniff(writeOffPath);
 
         jobs[rid].MappableFiles[key] = new MappableSetFiles(
-            writeOffPath, writeoffSniff.HasHeaders, exposurePath, exposureSniff.HasHeaders);
+            writeOffPath, writeoffSniff?.HasHeaders ?? false, exposurePath, exposureSniff.HasHeaders);
 
-        string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
         string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
 
-        IReadOnlyDictionary<string, string> savedWriteoff =
-            await columnMappingStore.GetSavedMappingAsync(userId.Value, "writeoff", writeoffSignature);
         IReadOnlyDictionary<string, string> savedExposure =
             await columnMappingStore.GetSavedMappingAsync(userId.Value, "exposure", exposureSignature);
 
-        IReadOnlyList<ResolvedField> writeoffFields =
-            columnMapper.Resolve(writeoffSniff.Headers, writeoffSniff.SampleRows, MappableFields.Writeoff, savedWriteoff);
         IReadOnlyList<ResolvedField> exposureFields =
             columnMapper.Resolve(exposureSniff.Headers, exposureSniff.SampleRows, MappableFields.Exposure, savedExposure);
 
@@ -327,10 +326,24 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
             })
         };
 
+        object? writeoffView = null;
+        if (writeoffSniff != null)
+        {
+            string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
+            IReadOnlyDictionary<string, string> savedWriteoff =
+                await columnMappingStore.GetSavedMappingAsync(userId.Value, "writeoff", writeoffSignature);
+            IReadOnlyList<ResolvedField> writeoffFields =
+                columnMapper.Resolve(writeoffSniff.Headers, writeoffSniff.SampleRows, MappableFields.Writeoff, savedWriteoff);
+
+            writeoffView = FileView(writeoffSniff, MappableFields.Writeoff, writeoffFields);
+        }
+
         mappingViews.Add(new
         {
             key,
-            writeoff = FileView(writeoffSniff, MappableFields.Writeoff, writeoffFields),
+            // null rather than absent, so the client can tell "this set has no
+            // write-off file" from "the response is malformed"
+            writeoff = writeoffView,
             exposure = FileView(exposureSniff, MappableFields.Exposure, exposureFields)
         });
     }
@@ -376,22 +389,35 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
         string key = setElem.GetProperty("key").GetString() ?? "";
         if (!job.MappableFiles.TryGetValue(key, out MappableSetFiles? files)) continue;
 
-        Dictionary<string, string> writeoffMapping = ReadMapping(setElem, "writeoff");
         Dictionary<string, string> exposureMapping = ReadMapping(setElem, "exposure");
 
-        await columnMappingStore.RecordRunMappingAsync(runGuid, key, "writeoff", writeoffMapping);
         await columnMappingStore.RecordRunMappingAsync(runGuid, key, "exposure", exposureMapping);
 
-        CsvSniff writeoffSniff = CsvSniffer.Sniff(files.WriteOffPath);
         CsvSniff exposureSniff = CsvSniffer.Sniff(files.ExposurePath);
-        string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
         string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
 
-        await columnMappingStore.SaveMappingAsync(userId.Value, "writeoff", writeoffSignature, writeoffMapping);
         await columnMappingStore.SaveMappingAsync(userId.Value, "exposure", exposureSignature, exposureMapping);
 
+        // a set uploaded without a write-off file has nothing to map for it, so
+        // there is no signature to save a profile against and no map to hand the
+        // engine - SetColumnMaps takes null for exactly this
+        ColumnMap? writeOffMap = null;
+        if (files.WriteOffPath != null)
+        {
+            Dictionary<string, string> writeoffMapping = ReadMapping(setElem, "writeoff");
+
+            await columnMappingStore.RecordRunMappingAsync(runGuid, key, "writeoff", writeoffMapping);
+
+            CsvSniff writeoffSniff = CsvSniffer.Sniff(files.WriteOffPath);
+            string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
+
+            await columnMappingStore.SaveMappingAsync(userId.Value, "writeoff", writeoffSignature, writeoffMapping);
+
+            writeOffMap = new ColumnMap(files.WriteOffHasHeaders, writeoffMapping);
+        }
+
         job.ColumnMaps[key] = new SetColumnMaps(
-            new ColumnMap(files.WriteOffHasHeaders, writeoffMapping),
+            writeOffMap,
             new ColumnMap(files.ExposureHasHeaders, exposureMapping));
     }
 
