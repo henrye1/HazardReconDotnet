@@ -236,16 +236,22 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         return Results.BadRequest(new { error = received.Error });
     }
 
-    jobs[rid] = new JobState
+    List<string> setKeys = InputDiscoverer.SetKeysForLabels(received.Sets.Select(s => s.Label));
+
+    JobState job = new()
     {
         Id = rid,
         UserId = userId.Value,
         Status = "ready",
         Roots = received.Sets.Select(s => s.Root).ToList(),
+        SetIdentities = received.Sets
+            .Select((s, i) => (s.Root, Identity: new SetIdentity(setKeys[i], s.Label)))
+            .ToDictionary(x => x.Root, x => x.Identity),
         Outdir = outdir,
         Indir = indir,
         Started = DateTime.Now.ToString("o")
     };
+    jobs[rid] = job;
 
     _ = Task.Run(async () =>
     {
@@ -274,7 +280,11 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         }
 
         s.Label = rs.Label;
-        string key = InputDiscoverer.SetKeyFromFolder(rs.Label);
+
+        // the key this set will be known by for the rest of the run, decided
+        // when the upload landed - deriving one here instead would file the
+        // mapping below under a key the engine never looks under
+        string key = job.SetIdentities[rs.Root].Key;
 
         setViews.Add(new
         {
@@ -303,7 +313,7 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         CsvSniff exposureSniff = CsvSniffer.Sniff(exposurePath);
         CsvSniff? writeoffSniff = writeOffPath == null ? null : CsvSniffer.Sniff(writeOffPath);
 
-        jobs[rid].MappableFiles[key] = new MappableSetFiles(
+        job.MappableFiles[key] = new MappableSetFiles(
             writeOffPath, writeoffSniff?.HasHeaders ?? false, exposurePath, exposureSniff.HasHeaders);
 
         string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
@@ -515,7 +525,8 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
             ReconciliationRunResult outResult = engine.Run(
                 capturedJob.Roots, capturedJob.Outdir, logger: Logger,
                 analyze: analyst != null, analyst: analyst, stages: stages,
-                columnMaps: capturedJob.ColumnMaps);
+                columnMaps: capturedJob.ColumnMaps,
+                setIdentities: capturedJob.SetIdentities);
 
             // Isolated on purpose: this aggregation only feeds /api/chat. It must never
             // turn a completed run (workbook/CSVs/dashboard already on disk) into an

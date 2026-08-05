@@ -12,6 +12,14 @@ public class InventorySet
     public string? WriteOff { get; set; }
 }
 
+/// <summary>
+/// The key and label a caller has already decided for a set folder, for when
+/// the folder name cannot carry them: the web upload writes each set into a
+/// numbered directory, so discovery re-deriving a key from disk would invent a
+/// different one from the key the caller filed that set's column mapping under.
+/// </summary>
+public record SetIdentity(string Key, string Label);
+
 public class Inventory
 {
     public string Root { get; set; } = string.Empty;

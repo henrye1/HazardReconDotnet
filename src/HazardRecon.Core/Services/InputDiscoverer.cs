@@ -39,6 +39,31 @@ public class InputDiscoverer
         return string.IsNullOrWhiteSpace(key) ? "SET" : key;
     }
 
+    /// <summary>
+    /// The one collision rule, so that a caller working out its keys ahead of
+    /// discovery (see <see cref="SetKeysForLabels"/>) and discovery itself
+    /// cannot disambiguate two same-named sets differently.
+    /// </summary>
+    private static string Unique(string baseKey, Func<string, bool> taken)
+    {
+        string key = baseKey;
+        int n = 2;
+        while (taken(key)) key = $"{baseKey} ({n++})";
+        return key;
+    }
+
+    /// <summary>
+    /// The keys a set of labels will be known by, in order - for a caller that
+    /// must file per-set state before those sets are discovered, and needs the
+    /// keys it files under to be the ones discovery will later look them up by.
+    /// </summary>
+    public static List<string> SetKeysForLabels(IEnumerable<string> labels)
+    {
+        List<string> keys = new();
+        foreach (string label in labels) keys.Add(Unique(SetKeyFromFolder(label), keys.Contains));
+        return keys;
+    }
+
     public static bool IsSetFolder(string dirPath)
     {
         if (!Directory.Exists(dirPath)) return false;
@@ -171,7 +196,14 @@ public class InputDiscoverer
         };
     }
 
-    public Inventory DiscoverFromFolders(List<string> folders, Action<string, string>? log = null)
+    /// <param name="identities">
+    /// The key and label to use for a folder, by the folder path as passed in.
+    /// A folder with no entry - every folder on the CLI path - keeps the key
+    /// derived from its own name.
+    /// </param>
+    public Inventory DiscoverFromFolders(
+        List<string> folders, Action<string, string>? log = null,
+        IReadOnlyDictionary<string, SetIdentity>? identities = null)
     {
         Inventory inv = new()
         {
@@ -189,14 +221,12 @@ public class InputDiscoverer
                 continue;
             }
 
-            string key = SetKeyFromFolder(s.Label);
-            string baseKey = key;
-            int n = 2;
-            while (inv.Sets.ContainsKey(key))
-            {
-                key = $"{baseKey} ({n})";
-                n++;
-            }
+            // a caller that named this set keeps its name: re-deriving one from
+            // the folder would lose whatever that caller filed against it
+            SetIdentity? given = identities?.GetValueOrDefault(f);
+            if (given != null) s.Label = given.Label;
+
+            string key = Unique(given?.Key ?? SetKeyFromFolder(s.Label), inv.Sets.ContainsKey);
 
             inv.Sets[key] = s;
             log?.Invoke($"{key}: write-off {(s.WriteOff != null ? "found" : "MISSING")}", LogKind.Info);
@@ -276,16 +306,7 @@ public class InputDiscoverer
             InventorySet? s = BuildSet(d, log, ifrs9Fallback);
             if (s == null) continue;
 
-            string key = SetKeyFromFolder(name);
-            string baseKey = key;
-            int n = 2;
-            while (inv.Sets.ContainsKey(key))
-            {
-                key = $"{baseKey} ({n})";
-                n++;
-            }
-
-            inv.Sets[key] = s;
+            inv.Sets[Unique(SetKeyFromFolder(name), inv.Sets.ContainsKey)] = s;
         }
 
         log?.Invoke($"discovered {inv.Sets.Count} debug set(s): {(inv.Sets.Count > 0 ? string.Join(", ", inv.Sets.Keys) : "none")}; write-off={(inv.WriteOff != null ? "found" : "MISSING")}", LogKind.Ok);

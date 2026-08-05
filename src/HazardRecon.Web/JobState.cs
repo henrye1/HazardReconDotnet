@@ -50,6 +50,15 @@ internal class JobState
     public string? ModelId { get; set; }
     public Dictionary<string, object>? AnalysisPayload { get; set; }
 
+    /// <summary>
+    /// The key and label each set root is known by, keyed by root. Decided once
+    /// when the upload lands, because the upload writes each set into a numbered
+    /// folder whose name carries neither: /api/discover files that set's column
+    /// mapping under this key, and /api/run hands the same identity to the
+    /// engine so it looks the mapping up under the key it was filed against.
+    /// </summary>
+    public Dictionary<string, SetIdentity> SetIdentities { get; set; } = new();
+
     /// <summary>Keyed by set key; populated by /api/discover, consumed by /api/discover/mapping.</summary>
     public Dictionary<string, MappableSetFiles> MappableFiles { get; set; } = new();
 

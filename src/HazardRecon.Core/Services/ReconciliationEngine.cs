@@ -162,7 +162,8 @@ public class ReconciliationEngine
     public ReconciliationRunResult Run(
         object root, string outdir = "output", Action<string, string>? logger = null,
         bool analyze = false, AiAnalysisService? analyst = null, StageReporter? stages = null,
-        IReadOnlyDictionary<string, SetColumnMaps>? columnMaps = null)
+        IReadOnlyDictionary<string, SetColumnMaps>? columnMaps = null,
+        IReadOnlyDictionary<string, SetIdentity>? setIdentities = null)
     {
         Directory.CreateDirectory(outdir);
         Action<string, string> log = (msg, kind) =>
@@ -191,7 +192,7 @@ public class ReconciliationEngine
         try
         {
             inv = root is IEnumerable<string> folderList
-                ? _discoverer.DiscoverFromFolders(folderList.ToList(), log)
+                ? _discoverer.DiscoverFromFolders(folderList.ToList(), log, setIdentities)
                 : _discoverer.DiscoverInputs(root.ToString()!, log);
         }
         catch
