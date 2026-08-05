@@ -140,12 +140,35 @@ Failure modes:
   nothing for it and require it to be complete on its own, which the existing
   per-set validation already enforces.
 
-### `IFileStore.DownloadAsync`
+### `IFileStore.DownloadToFileAsync`
 
 New method plus its Supabase implementation. The engine reads inputs from local
 disk (`job.Roots`, `Program.cs:244,516`), so a reused object has to be
-materialised locally; an in-bucket copy would not be enough. Streamed to disk
-rather than buffered, since a debug file can be hundreds of megabytes.
+materialised locally; an in-bucket copy would not be enough.
+
+It writes to a path rather than returning a `Stream`, because
+`SupabaseRestClient.SendAsync` reads whole responses into a `string`
+(`SupabaseRestClient.cs:43`) and a debug file of several hundred megabytes must
+not be buffered. A companion `SupabaseRestClient.DownloadToFileAsync` streams
+with `HttpCompletionOption.ResponseHeadersRead`, and writes nothing unless the
+response succeeded, so a failure cannot leave a truncated file that would read as
+a valid but short input.
+
+### Reused files are handed to the receiver as upload items
+
+`InputReuse` turns each reused role into an ordinary `SetFileItem` and passes it
+to `SetFileReceiver` alongside the real uploads, rather than writing into the
+input directory itself.
+
+`SetFileReceiver` then needs no change at all: canonical naming, the
+"missing its exposure file" check, the per-set size limit and the set label —
+which is taken from the exposure file's original name — all keep working for a
+set that was mostly reused. A second path that wrote files directly would have to
+reimplement each of those and could drift from the first.
+
+The reused bytes are downloaded to `runs/<rid>/_reuse/`, which sits *outside*
+`input/`, so it is never persisted as part of the new run. It is deleted once the
+receiver has copied from it.
 
 ### Client: slots hold either a File or a stored-file descriptor
 
@@ -160,11 +183,19 @@ slot back into an ordinary pick with no special case.
 A slot is either all descriptors or all `File`s, never mixed: Replace overwrites
 the whole array, which is what the picker already does.
 
-`setBytes` and the size-limit check must skip descriptors: a reused file is not
-being uploaded, so it cannot breach an upload limit.
+`setBytes` counts descriptors along with picked files, and so does the size-limit
+check. A reused file is not being uploaded, so counting it as upload cost looks
+wrong at first — but the limit `SetFileReceiver` enforces is on the *whole set*,
+and reused files reach it as items like any other. Counting only the new bytes in
+the browser would let a set through that the server then rejects, after the
+upload had been paid for. One rule, enforced the same way on both sides.
 
-`discover()` (`app.js:728`) appends only real `File`s, and includes
-`based_on_run` when any descriptor survives anywhere.
+`discover()` (`app.js:728`) appends only real `File`s, and adds two fields when
+any descriptor survives: `based_on_run` (the run the descriptors came from) and
+`reuse`, a JSON array of `{ set, roles }` naming exactly what the server should
+rebuild. Sending the roles explicitly rather than letting the server infer
+"whatever was not uploaded" is what makes removing a file work: a role the user
+cleared is simply absent from both.
 
 ### Client: "Run again"
 
@@ -197,10 +228,12 @@ the same class of quietly-wrong result as the 0% trace this follows.
 - `/api/runs/{rid}/inputs`: shape; another user's run is 404; a purged run
   reports `inputs_purged` with no files.
 - `/api/discover` with `based_on_run`: all roles reused when nothing is uploaded;
-  only the replaced role taken from the upload and the rest reused; a purged or
-  missing source gives a 400 naming the roles; a set with no counterpart is
-  validated on its own.
-- `IFileStore.DownloadAsync` round-trips a file written by `UploadAsync`.
+  only the replaced role taken from the upload and the rest reused; a purged
+  source gives a 400 saying the files expired; another user's run is a 404.
+- `InputReuse`: a requested role the previous run does not have, and an object
+  that is indexed but missing from the bucket, are both refused by name.
+- `DownloadToFileAsync` round-trips a stored object, and a 404 from storage
+  leaves no file behind.
 
 **Client harness** (`tests/client/app.harness.mjs`)
 
@@ -208,9 +241,10 @@ the same class of quietly-wrong result as the 0% trace this follows.
 - Run again on a purged run shows the expired line and empty slots.
 - Touching any slot closes mapping, confirm and run; leaving them untouched keeps
   them reachable.
-- `discover()` posts `based_on_run` plus only the replaced file.
-- An oversized *reused* file does not disable "Check columns", since it is not
-  being uploaded.
+- `discover()` posts `based_on_run` and `reuse` plus only the replaced file, and
+  posts neither field once every slot in the set has been replaced.
+- Adding a set on a re-run works: the new set is uploaded in full and named in no
+  reuse entry.
 - "Run reconciliation" on the confirm step still starts a run, unchanged.
 
 ## Risks
