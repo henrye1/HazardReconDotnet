@@ -1268,11 +1268,36 @@ function startRun(hasRetried) {
     body: JSON.stringify({ run_id: RUN_ID, model_id: $("#model").value || null })
   }).then(readJson)
     .then(({ ok, status, j }) => {
-      if (status === 404 && !hasRetried && pathValues().length) {
-        // the app was restarted and forgot this run - quietly re-check the
-        // same folders, then start again with the fresh run id
+      if (status === 404 && !hasRetried && SETS.some(setStarted)) {
+        // The app was restarted and forgot this run, but the picked files are
+        // still in the page - so re-check them and start again with the fresh
+        // run id rather than making the user choose them a second time.
+        //
+        // The mapping has to be re-confirmed as part of that: /api/run hands the
+        // engine whatever ColumnMaps the mapping step stored, and a run id
+        // discovery has only just minted has none. Skipping it would start a run
+        // with no mapping at all.
+        //
+        // The user's own column choices are carried across, because discovery
+        // resets them to its suggestions. Their keys are set/file/field, not run
+        // id, so they reapply to the fresh discovery of the same files - which
+        // makes the retried run the run they confirmed rather than a new guess.
+        const edits = MAP_EDITS;
+        const reading = {};
+        MAP_FILES.forEach(f => { reading[f.setKey + " " + f.fileKind] = f.hasHeaders; });
+
         return discover()
-          .then(() => startRun(true))
+          .then(() => {
+            MAP_EDITS = edits;
+            MAP_FILES.forEach(f => {
+              const was = reading[f.setKey + " " + f.fileKind];
+              if (was !== undefined) f.hasHeaders = was;
+            });
+            return confirmMapping();
+          })
+          // discovery and the mapping each move the rail to their own step, so
+          // the run step has to be put back before the run is watched again
+          .then(() => { setStep(3); return startRun(true); })
           .catch(e => failRun(e.message));
       }
       if (!ok || !j) {

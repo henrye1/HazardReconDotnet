@@ -47,9 +47,24 @@ function makeEl(id = "") {
     addEventListener(type, fn) { (el._h[type] = el._h[type] || []).push(fn); },
     _fire(type) { (el._h[type] || []).forEach(f => f()); },
     scrollIntoView() {}, focus() {},
+    // Appended children first. Failing that, the element's own markup: the set
+    // rows are built as an innerHTML string and then queried for the spans
+    // inside it (row.querySelector(".meta")), which a children-only lookup
+    // answers with null. The stand-in is cached per selector so the app sees a
+    // stable node, and so a scenario can read back what was written to it.
+    _q: {},
     querySelector(sel) {
-      const want = sel.replace(".", "");
-      return kids.find(k => (k.className || "").split(" ").includes(want)) || null;
+      const s = String(sel);
+      if (s.startsWith(".")) {
+        const kid = kids.find(k => (k.className || "").split(" ").includes(s.slice(1)));
+        if (kid) return kid;
+      }
+      if (el._q[s]) return el._q[s];
+      const re = s.startsWith(".") ? new RegExp('class="[^"]*\\b' + s.slice(1) + '\\b[^"]*"')
+        : s.startsWith("#") ? new RegExp('id="' + s.slice(1) + '"')
+        : new RegExp("<" + s + "\\b");
+      if (!re.test(el._html)) return null;
+      return (el._q[s] = makeEl());
     },
     // Scans the assigned innerHTML, because the app wires handlers onto markup it
     // generated as a string. Without this the calls throw, and loadHistory's catch
@@ -75,6 +90,13 @@ function makeEl(id = "") {
       return found;
     },
     get children() { return kids; },
+    // the mapping cards write their title into the first node of markup they
+    // built as a string, so this needs the same stand-in querySelector uses
+    get firstChild() {
+      if (kids.length) return kids[0];
+      if (!el._html) return null;
+      return el._q[":first"] || (el._q[":first"] = makeEl());
+    },
   };
   return el;
 }
@@ -92,6 +114,10 @@ function newCtx() {
     document: {
       querySelector: $get,
       createElement: () => makeEl(),
+      // the page binds a global keydown for the shortcut keys; recorded rather
+      // than dropped so a scenario can fire one
+      _h: {},
+      addEventListener(type, fn) { (this._h[type] = this._h[type] || []).push(fn); },
     },
     localStorage: { _d: {}, getItem(k) { return this._d[k] ?? null; }, setItem(k, v) { this._d[k] = v; } },
     setInterval: (fn) => { timers.armed = fn; timers.id = timers.nextId++; return timers.id; },
@@ -483,47 +509,68 @@ async function scenarioM() {
     `msg='${h.$get("#auth-msg").textContent}'`);
 }
 
-/* ---------------- O: folder picking ---------------- */
-const mkFile = (relPath, size) => ({ name: relPath.split("/").pop(), size, webkitRelativePath: relPath });
+/* ---------------- O: file picking ---------------- */
+const mkFile = (name, size) => ({ name: name.split("/").pop(), size });
+
+/* renderSets() builds the slots, so the file inputs carry no ids and have to be
+   reached through #sets. A set block is [head, ...one row per FILE_KIND] and a
+   row is [input, pick button, (clear button)]. Every pick redraws, so nothing
+   here holds a reference across a change. */
+const KIND_AT = { exposure: 0, writeoff: 1, debug: 2, scenario: 3 };
+const setBlock = (h, i) => h.$get("#sets").children[i];
+const setHead = (h, i) => setBlock(h, i).children[0].innerHTML;
+const slotRow = (h, i, kind) => setBlock(h, i).children[1 + KIND_AT[kind]];
+// the line under a slot's label is written to a span inside the row's markup
+const slotSubText = (h, i, kind) => {
+  const meta = slotRow(h, i, kind)._q[".meta"];
+  return meta ? meta.textContent : "";
+};
+function pickInto(h, i, kind, files) {
+  const input = slotRow(h, i, kind).children[0];
+  input.files = files;
+  input._fire("change");
+}
+// the two roles the server insists on, which is what makes a set runnable
+const fillSet = (h, i) => {
+  pickInto(h, i, "exposure", [mkFile("ifrs9.csv", 2048)]);
+  pickInto(h, i, "debug", [mkFile("debug.zip", 1024)]);
+};
 
 async function scenarioO() {
-  console.log("O) picking a folder enables the check and uploads it per set");
+  console.log("O) picking the required files enables the check");
   const h = bootAuth({ access_token: "tok-abc" });
   await tick(); await tick(); await tick();
 
   check("check button starts disabled", h.$get("#btn-check").disabled === true);
+  check("the empty state names the set limit",
+    /No files chosen yet, up to 4 sets/.test(h.$get("#set-count").textContent),
+    `count='${h.$get("#set-count").textContent}'`);
 
-  h.$get("#path1").files = [
-    mkFile("JUNE 2026 0.5 PERCENT/debug.zip", 1024),
-    mkFile("JUNE 2026 0.5 PERCENT/write-off.csv", 2048),
-  ];
-  h.$get("#path1")._fire("change");
+  // the exposure file alone is a half-filled set: the receiver would reject it,
+  // so it must not be offered for upload
+  pickInto(h, 0, "exposure", [mkFile("ifrs9.csv", 2048)]);
+  check("a half-filled set does not enable the check", h.$get("#btn-check").disabled === true);
+  check("the set says what it still needs", /still needs its required files/.test(setHead(h, 0)),
+    `head='${setHead(h, 0)}'`);
+  check("the chosen file is named with its size", /ifrs9\.csv · 2 KB/.test(slotSubText(h, 0, "exposure")),
+    `sub='${slotSubText(h, 0, "exposure")}'`);
 
-  check("check button enabled once a folder is chosen", h.$get("#btn-check").disabled === false);
-  // the folder's name is the row's heading; the size sits under it
-  check("the folder name becomes the heading",
-    /JUNE 2026 0\.5 PERCENT/.test(h.$get("#path1-pick").textContent),
-    `pick='${h.$get("#path1-pick").textContent}'`);
-  check("the size is shown", /2 files/.test(h.$get("#path1-info").textContent),
-    `info='${h.$get("#path1-info").textContent}'`);
-  check("the folder count is shown", /1 of 4/.test(h.$get("#folder-count").textContent),
-    `count='${h.$get("#folder-count").textContent}'`);
+  pickInto(h, 0, "debug", [mkFile("debug.zip", 1024)]);
+  check("check button enabled once the required files are in", h.$get("#btn-check").disabled === false);
+  check("the set reports how many files it has", /2 of 4 files chosen/.test(setHead(h, 0)),
+    `head='${setHead(h, 0)}'`);
+  check("the ready count is shown", /1 of 1 set ready/.test(h.$get("#set-count").textContent),
+    `count='${h.$get("#set-count").textContent}'`);
 
-  // a real 159 MB debug folder must be accepted, not blocked
-  h.$get("#path1").files = [mkFile("DEBUG 3 MONTHS/debug.zip", 159 * 1024 * 1024)];
-  h.$get("#path1")._fire("change");
+  // a real 159 MB debug file must be accepted, not blocked
+  pickInto(h, 0, "debug", [mkFile("debug.zip", 159 * 1024 * 1024)]);
+  check("a 159 MB debug file is accepted", h.$get("#btn-check").disabled === false, `head='${setHead(h, 0)}'`);
 
-  check("a 159 MB folder is accepted", h.$get("#btn-check").disabled === false,
-    `info='${h.$get("#path1-info").textContent}'`);
-
-  // an oversized folder must block the button rather than fail after upload
-  h.$get("#path1").files = [mkFile("BIG/huge.zip", 600 * 1024 * 1024)];
-  h.$get("#path1")._fire("change");
-
-  check("oversized folder disables the check", h.$get("#btn-check").disabled === true);
-  check("the size limit is explained",
-    /limit is 512 MB/.test(h.$get("#path1-info").textContent),
-    `info='${h.$get("#path1-info").textContent}'`);
+  // oversized must block the button rather than fail after the upload is paid for
+  pickInto(h, 0, "debug", [mkFile("huge.zip", 600 * 1024 * 1024)]);
+  check("oversized set disables the check", h.$get("#btn-check").disabled === true);
+  check("the size limit is explained", /is over the 512 MB limit/.test(setHead(h, 0)),
+    `head='${setHead(h, 0)}'`);
 }
 
 /* ---------------- R: the two screens and the step rail ---------------- */
@@ -555,7 +602,7 @@ async function scenarioR() {
   h.$get("#btn-new-run")._fire("click");
   check("wizard shown after New run", !h.$get("#screen-wizard").classList.contains("hide"));
   check("runs screen hidden", h.$get("#screen-runs").classList.contains("hide"));
-  check("title is step 1", /Choose your analysis folders/.test(h.$get("#step-title").textContent),
+  check("title is step 1", /Choose your input files/.test(h.$get("#step-title").textContent),
     `title='${h.$get("#step-title").textContent}'`);
 
   // the flow moves the rail forward
@@ -585,57 +632,53 @@ async function scenarioS() {
   // without the reset the old run's detail stays reachable behind a fresh picker
   check("the detail screen is left for the new run", h.$get("#screen-detail").classList.contains("hide"));
   check("the conversation is closed", h.$get("#chat-drawer").classList.contains("hide"));
-  check("folder picker shown again", !h.$get("#step-folders").classList.contains("hide"));
-  check("back to step 1", /Choose your analysis folders/.test(h.$get("#step-title").textContent));
+  check("folder picker shown again", !h.$get("#step-files").classList.contains("hide"));
+  check("back to step 1", /Choose your input files/.test(h.$get("#step-title").textContent));
 }
 
 async function scenarioQ() {
   console.log("Q) the browser adopts the server's size limit rather than its own");
-  // server says 100 MB; a 150 MB folder must be refused even though the
-  // built-in fallback (512 MB) would have allowed it
+  // server says 100 MB; a 150 MB set must be refused even though the built-in
+  // fallback (512 MB) would have allowed it
   const h = bootAuth({ access_token: "tok-abc" }, (url) =>
     Promise.resolve(jsonRes(200, url === "/api/config"
       ? Object.assign({}, CFG, { maxBytesPerSet: 100 * 1024 * 1024 })
       : [])));
   await tick(); await tick(); await tick();
 
-  h.$get("#path1").files = [mkFile("SET/big.zip", 150 * 1024 * 1024)];
-  h.$get("#path1")._fire("change");
+  pickInto(h, 0, "debug", [mkFile("big.zip", 150 * 1024 * 1024)]);
 
   check("the server's smaller limit is enforced", h.$get("#btn-check").disabled === true);
-  check("the message quotes the server's limit",
-    /limit is 100 MB/.test(h.$get("#path1-info").textContent),
-    `info='${h.$get("#path1-info").textContent}'`);
+  check("the message quotes the server's limit", /is over the 100 MB limit/.test(setHead(h, 0)),
+    `head='${setHead(h, 0)}'`);
 }
 
 async function scenarioP() {
-  console.log("P) each file is posted under its own set field, keeping its relative path");
+  console.log("P) each file is posted under its own set field, named for its role");
   const posted = [];
   const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
     if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
     if (url === "/api/discover") {
       posted.push(...(opts.body._parts || []));
       return Promise.resolve(jsonRes(200,
-        { run_id: "RID9", inventory: { root: "r", sets: [] }, problems: [] }));
+        { run_id: "RID9", inventory: { root: "r", sets: [] }, problems: [], mapping: [] }));
     }
     return Promise.resolve(jsonRes(200, []));
   });
   await tick(); await tick(); await tick();
 
-  h.$get("#path1").files = [mkFile("SET A/debug.zip", 10)];
-  h.$get("#path1")._fire("change");
-  h.ctx.addPathRow();
-  h.$get("#path2").files = [mkFile("SET B/debug.zip", 10)];
-  h.$get("#path2")._fire("change");
+  fillSet(h, 0);
+  h.$get("#btn-add-set")._fire("click");
+  fillSet(h, 1);
 
   await h.ctx.discover();
 
-  check("both folders were sent", posted.length === 2, JSON.stringify(posted));
-  check("fields are named per set",
-    posted[0].field === "set0" && posted[1].field === "set1",
+  check("both sets were sent", posted.length === 4, JSON.stringify(posted.map(p => p.field)));
+  check("fields are numbered per set and named for the role",
+    posted.map(p => p.field).join() === "set0.Exposure,set0.Debug,set1.Exposure,set1.Debug",
     JSON.stringify(posted.map(p => p.field)));
-  check("the relative path travels as the filename",
-    posted[0].filename === "SET A/debug.zip" && posted[1].filename === "SET B/debug.zip",
+  check("the file's own name travels as the filename",
+    posted.every(p => p.filename === "ifrs9.csv" || p.filename === "debug.zip"),
     JSON.stringify(posted.map(p => p.filename)));
 }
 
@@ -1287,14 +1330,15 @@ async function scenarioY() {
     Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
   await tick(); await tick(); await tick();
 
-  const shown = () => ["folders", "confirm", "run"]
+  // steps: 0 files, 1 mapping, 2 confirm, 3 run, 4 results (its own screen)
+  const shown = () => ["files", "mapping", "confirm", "run"]
     .filter(s => !h.$get("#step-" + s).classList.contains("hide"));
 
   h.$get("#nav-new")._fire("click");
-  check("folders only, at step 1", shown().join() === "folders", `shown=${shown().join()||"none"}`);
+  check("files only, at step 1", shown().join() === "files", `shown=${shown().join()||"none"}`);
 
   h.ctx.showInventory(INVENTORY_FIX);
-  check("confirm replaces folders", shown().join() === "confirm", `shown=${shown().join()||"none"}`);
+  check("confirm replaces files", shown().join() === "confirm", `shown=${shown().join()||"none"}`);
 
   h.ctx.beginRun();
   await tick(); await tick();
@@ -1302,22 +1346,23 @@ async function scenarioY() {
 
   // the rail can return to a step already visited
   check("step 1 is offered", h.$get("#rail-0").disabled === false);
-  check("step 2 is offered", h.$get("#rail-1").disabled === false);
-  check("the current step is not offered", h.$get("#rail-2").disabled === true);
-  check("results is not offered before there is one", h.$get("#rail-3").disabled === true);
+  check("the mapping step is offered", h.$get("#rail-1").disabled === false);
+  check("the confirm step is offered", h.$get("#rail-2").disabled === false);
+  check("the current step is not offered", h.$get("#rail-3").disabled === true);
+  check("results is not offered before there is one", h.$get("#rail-4").disabled === true);
 
   h.$get("#rail-0")._fire("click");
-  check("the rail returns to folders", shown().join() === "folders", `shown=${shown().join()||"none"}`);
-  check("the title follows", /Choose your analysis folders/.test(h.$get("#step-title").textContent));
-  check("forward stays reachable once visited", h.$get("#rail-2").disabled === false);
+  check("the rail returns to the files", shown().join() === "files", `shown=${shown().join()||"none"}`);
+  check("the title follows", /Choose your input files/.test(h.$get("#step-title").textContent));
+  check("forward stays reachable once visited", h.$get("#rail-3").disabled === false);
 
-  h.$get("#rail-2")._fire("click");
+  h.$get("#rail-3")._fire("click");
   check("and forward again to the run", shown().join() === "run", `shown=${shown().join()||"none"}`);
 
   // a fresh run forgets where the last one got to
   h.$get("#nav-new")._fire("click");
   check("a new run cannot jump ahead", h.$get("#rail-1").disabled === true &&
-    h.$get("#rail-2").disabled === true, "later steps should be closed again");
+    h.$get("#rail-3").disabled === true, "later steps should be closed again");
 }
 
 /* ---------------- YY: walking back mid-run and checking again ---------------- */
@@ -1336,12 +1381,127 @@ async function scenarioYY() {
 
   // back to the folders, then check again - the old poll must not survive it
   h.$get("#rail-0")._fire("click");
-  check("the rail walked back mid-run", !h.$get("#step-folders").classList.contains("hide"));
+  check("the rail walked back mid-run", !h.$get("#step-files").classList.contains("hide"));
   check("the run step is put away", h.$get("#step-run").classList.contains("hide"));
 
   h.$get("#btn-check")._fire("click");
   check("the superseded poll was dropped", h.timers.armed === null,
     "a live poll would chase the run id discovery is replacing");
+}
+
+/* ---------------- DR: Run again after the server forgot the run ----------------
+   The app keeps the picked files in the page, so a run the server has forgotten
+   (restart, or the job cache evicting it) can be recovered without asking for
+   them again. Two regressions live on this path: the guard used to call a helper
+   that no longer exists, and the retry used to jump straight from discovery to
+   the run - skipping the mapping step, which is the only thing that gives the
+   engine its ColumnMaps. */
+const REDISCOVER_FIX = {
+  run_id: "RID-FRESH",
+  inventory: { root: "r", sets: [{ key: "K", label: "L", writeoff: "wo.csv" }] },
+  problems: [],
+  mapping: [{
+    key: "K",
+    exposure: {
+      has_headers: true,
+      headers: ["AccountNo", "Exposure"],
+      samples: [["A1", "100"]],
+      fields: [
+        { field: "AccountNo", column: "AccountNo", confidence: 1, source: "header_match" },
+        { field: "Exposure", column: "Exposure", confidence: 1, source: "header_match" },
+      ],
+    },
+  }],
+};
+
+async function scenarioDR() {
+  console.log("DR) Run again when the server has forgotten the run re-checks and re-maps");
+  const calls = [];
+  let runCalls = 0;
+  let mappingBody = null;
+  const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
+    calls.push(url);
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/discover") return Promise.resolve(jsonRes(200, REDISCOVER_FIX));
+    if (url === "/api/discover/mapping") {
+      mappingBody = JSON.parse(opts.body);
+      return Promise.resolve(jsonRes(200, { ok: true }));
+    }
+    if (url === "/api/run") {
+      runCalls += 1;
+      // the first attempt is against the run id the server has dropped
+      return Promise.resolve(runCalls === 1
+        ? jsonRes(404, { error: "Unknown run - please run discovery again." })
+        : jsonRes(200, { run_id: "RID-FRESH", status: "running" }));
+    }
+    if (url.startsWith("/api/job/"))
+      return Promise.resolve(jsonRes(200, { id: "RID-FRESH", status: "running", log: [], stages: [] }));
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  // the ordinary route to a run: pick the files, check them, confirm the mapping
+  fillSet(h, 0);
+  await h.ctx.discover();
+  await h.ctx.confirmMapping();
+  const firstMapping = JSON.stringify(mappingBody);
+  check("the mapping was confirmed for the first run", mappingBody !== null &&
+    mappingBody.run_id === "RID-FRESH", firstMapping);
+
+  h.ctx.beginRun();
+  for (let i = 0; i < 8; i++) await tick();
+
+  check("the retry does not die on a missing helper",
+    !/is not defined/.test(errText(h) || ""), `err='${errText(h)}'`);
+  check("the run recovers rather than failing", badge(h) === "Running", `badge='${badge(h)}'`);
+  check("no error is shown", errText(h) === null, `err='${errText(h)}'`);
+  check("the files were re-checked",
+    calls.filter(u => u === "/api/discover").length === 2,
+    `discover calls=${calls.filter(u => u === "/api/discover").length}`);
+
+  // without this the fresh run id reaches the engine with no ColumnMaps at all
+  const lastRun = calls.lastIndexOf("/api/run");
+  const lastMap = calls.lastIndexOf("/api/discover/mapping");
+  check("the mapping was re-confirmed", lastMap > calls.indexOf("/api/discover/mapping"),
+    `calls=${calls.join(" ")}`);
+  check("the mapping was re-confirmed before the run started", lastMap < lastRun,
+    `calls=${calls.join(" ")}`);
+  check("the retried run carries the fresh run id", mappingBody.run_id === "RID-FRESH",
+    JSON.stringify(mappingBody));
+  check("the mapping sent is the one the user confirmed", JSON.stringify(mappingBody) === firstMapping,
+    `first=${firstMapping} second=${JSON.stringify(mappingBody)}`);
+
+  check("the run is polled", h.timers.armed !== null);
+  check("the wizard is left on the run step",
+    !h.$get("#step-run").classList.contains("hide") &&
+    h.$get("#step-confirm").classList.contains("hide"),
+    "the retry walks through mapping and confirm, so it has to come back");
+  check("it only retries once", runCalls === 2, `run calls=${runCalls}`);
+}
+
+/* ---------------- DS: nothing left to re-check ---------------- */
+async function scenarioDS() {
+  console.log("DS) a forgotten run with no files in the page explains itself");
+  // reopening a past run in a fresh session cannot recover: a file input cannot
+  // be repopulated from script, so there is nothing to re-upload
+  const h = bootAuth({ access_token: "tok-abc" }, (url) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/run")
+      return Promise.resolve(jsonRes(404, { error: "Unknown run - please run discovery again." }));
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  h.ctx.showInventory(INVENTORY_FIX);
+  h.ctx.beginRun();
+  for (let i = 0; i < 6; i++) await tick();
+
+  check("it does not crash on a missing helper", !/is not defined/.test(errText(h) || ""),
+    `err='${errText(h)}'`);
+  check("the badge reports the failure", badge(h) === "Failed", `badge='${badge(h)}'`);
+  check("the server's advice is shown", /run discovery again/i.test(errText(h) || ""),
+    `err='${errText(h)}'`);
+  check("the Run button is given back", h.$get("#btn-run").disabled === false);
 }
 
 /* ---------------- Z: the Back button uses the same path ---------------- */
@@ -1353,9 +1513,9 @@ async function scenarioZ() {
 
   h.$get("#nav-new")._fire("click");
   h.ctx.showInventory(INVENTORY_FIX);
-  h.$get("#btn-back-folders")._fire("click");
+  h.$get("#btn-back-files")._fire("click");
 
-  check("folders is back", !h.$get("#step-folders").classList.contains("hide"));
+  check("folders is back", !h.$get("#step-files").classList.contains("hide"));
   check("confirm is put away", h.$get("#step-confirm").classList.contains("hide"));
   check("the rail marks step 1 current", h.$get("#rail-0").disabled === true);
 }
@@ -1380,6 +1540,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
