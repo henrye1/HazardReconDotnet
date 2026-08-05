@@ -403,6 +403,16 @@ input[type=file]::file-selector-button:hover{background:var(--cl-hover-color)}
 .reqs{display:grid;gap:14px}
 .req{display:flex;gap:12px;align-items:flex-start}
 .req>.ms-icon{font-size:20px;color:var(--cl-primary-color);margin-top:1px;flex:none}
+
+/* ---------- column mapper ---------- */
+#map-files > .card + .card {
+  margin-top: 20px;
+}
+.maphead{
+  display:flex;align-items:center;gap:14px;padding:12px 15px;
+  border-bottom:1px solid var(--cl-border-color);
+}
+
 .req>div{display:grid;gap:2px;min-width:0}
 .req b{font-size:14px;font-weight:600}
 .req span{font-size:13px;color:var(--cl-off-text-color);text-wrap:pretty}
@@ -875,3 +885,4 @@ table.heat td.cohort{padding:9px 8px;text-align:right;white-space:nowrap;
 .search .ms-icon{font-size:20px;color:var(--cl-off-text-color)}
 .search input{border:0;height:auto;padding:0;width:200px;font-size:14px;background:transparent}
 .search input:focus{outline:0}
+
