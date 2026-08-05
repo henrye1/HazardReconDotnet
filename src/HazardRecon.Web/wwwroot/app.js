@@ -1416,10 +1416,20 @@ function renderSummaryTab(res) {
     const head = `${escapeHtml(s.key)} — ${escapeHtml(s.label || "")}`;
     const window = `Scoring window ${escapeHtml(s.window || "n/a")} · ${fmt(s.scored)} scored accounts`;
 
-    const mismatch = s.ifrs9_overlap === 0
-      ? `<p class="warn" style="margin:0">IFRS9 could not be matched for this set — the two files
-           number accounts differently, so every default traced through the write-off file alone.</p>`
-      : "";
+    /* Nothing traced at all is not the same finding as IFRS9 not matching, and
+       must not borrow its explanation: saying the defaults "traced through the
+       write-off file alone" while nothing traced through anything reads as a
+       quirk of the data when it is almost always the mapping. Neither line
+       asserts a cause it has not established. */
+    const mismatch = (s.traced === 0 && s.defaults > 0)
+      ? `<p class="warn" style="margin:0">Not one of the ${fmt(s.defaults)} defaults was traced.
+           That is usually the column mapping rather than the data — check that the account number
+           in the write-off and exposure files is mapped to the right column, then run it again.</p>`
+      : s.ifrs9_overlap === 0
+        ? `<p class="warn" style="margin:0">No default matched the exposure file, so all
+             ${fmt(s.traced)} traced through the write-off file. The two files may number
+             accounts differently.</p>`
+        : "";
 
     return `
       <div class="card">

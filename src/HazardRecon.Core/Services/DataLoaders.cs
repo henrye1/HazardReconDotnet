@@ -30,6 +30,40 @@ public class DataLoaders
             ? csv.GetField(sourceColumn)
             : (int.TryParse(sourceColumn, out int idx) ? csv.GetField(idx) : csv.GetField(sourceColumn));
 
+    /// <summary>
+    /// A column this file does not have, named before a single row is read. Missing
+    /// fields are configured to return null rather than throw, so without this the
+    /// account column resolving to nothing reads as a file of no accounts - which
+    /// traces no defaults and reports a clean 0%, a plausible figure that is really
+    /// a mapping failure. Only meaningful for a headered file; a positional map is
+    /// caught by <see cref="RequireAnyAccounts"/> once the rows have been read.
+    /// </summary>
+    private static void RequireColumn(CsvReader csv, bool hasHeaders, string sourceColumn, string field, string path)
+    {
+        if (!hasHeaders || csv.HeaderRecord == null) return;
+        if (csv.HeaderRecord.Contains(sourceColumn)) return;
+
+        throw new InvalidOperationException(
+            $"{Path.GetFileName(path)}: {field} is mapped to the column \"{sourceColumn}\", " +
+            $"which this file does not have. Its columns are: {string.Join(", ", csv.HeaderRecord)}. " +
+            "Map the columns for this file and run it again.");
+    }
+
+    /// <summary>
+    /// The backstop for everything <see cref="RequireColumn"/> cannot see: a
+    /// positional map pointing past the last column, or a column that is present
+    /// but blank on every row. A file with rows but not one account number in it
+    /// cannot reconcile anything, so it is refused rather than counted as empty.
+    /// </summary>
+    private static void RequireAnyAccounts(int dataRows, int accountsFound, string sourceColumn, string path)
+    {
+        if (dataRows == 0 || accountsFound > 0) return;
+
+        throw new InvalidOperationException(
+            $"{Path.GetFileName(path)}: none of its {dataRows:N0} rows had an account number in \"{sourceColumn}\". " +
+            "Check the column mapping for this file and run it again.");
+    }
+
     public EngineScenario LoadScenario(string? scenarioPath, string? debugJsonPath, Action<string, string>? log = null)
     {
         EngineScenario scenario = new();
@@ -292,9 +326,26 @@ public class DataLoaders
         string amtCol = columnMap?.Resolve("Amount") ?? "Amount";
         string dateCol = columnMap?.Resolve("ReportDate") ?? "ReportDate";
 
+        // the join key is not optional: check 1 traces every default through it
+        RequireColumn(csv, hasHeaders, acctCol, "the write-off account number", path);
+
+        // the rest each cost one figure rather than the whole check, so they are
+        // reported and carried on with: no date limits check 2's window, no amount
+        // leaves the write-off totals at zero
+        foreach ((string col, string what) in new[]
+        {
+            (custCol, "customer id"), (amtCol, "write-off amount"), (dateCol, "report date"),
+        })
+        {
+            if (hasHeaders && csv.HeaderRecord != null && !csv.HeaderRecord.Contains(col))
+                log?.Invoke($"write-off: no \"{col}\" column for the {what} - that figure will be empty", LogKind.Warn);
+        }
+
         List<RawWriteOffRow> rawRows = new();
+        int dataRows = 0;
         while (csv.Read())
         {
+            dataRows++;
             string acct = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, acctCol));
             if (string.IsNullOrEmpty(acct)) continue;
 
@@ -310,6 +361,8 @@ public class DataLoaders
                 ReportDate = reportDate
             });
         }
+
+        RequireAnyAccounts(dataRows, rawRows.Count, acctCol, path);
 
         List<WriteOffAggRecord> agg = rawRows
             .GroupBy(r => r.AccountNormalized)
@@ -363,6 +416,13 @@ public class DataLoaders
         bool hasAmountCol = resolvedAmountCol != null &&
             (!hasHeaders || (csv.HeaderRecord != null && csv.HeaderRecord.Contains(resolvedAmountCol)));
 
+        // the account column is what the defaults are traced into, so a file that
+        // does not have it cannot contribute a trace and must say so
+        RequireColumn(csv, hasHeaders, resolvedColName, $"{label} account number", path);
+
+        if (resolvedAmountCol != null && !hasAmountCol)
+            log?.Invoke($"{label}: no \"{resolvedAmountCol}\" column - exposure per account will be empty", LogKind.Warn);
+
         while (csv.Read())
         {
             res.TotalRows++;
@@ -377,6 +437,8 @@ public class DataLoaders
                 res.AmountsPerAccount[acct] = res.AmountsPerAccount.GetValueOrDefault(acct, 0.0) + amt;
             }
         }
+
+        RequireAnyAccounts(res.TotalRows, res.AccountNumbers.Count, resolvedColName, path);
 
         log?.Invoke($"{label}: {res.AccountNumbers.Count:N0} distinct accounts", LogKind.Ok);
         return res;

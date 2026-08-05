@@ -899,7 +899,8 @@ async function scenarioV() {
   h.ctx.showResults(broken, []);
 
   const sum = h.$get("#tab-summary").innerHTML;
-  check("the IFRS9 mismatch is explained", /IFRS9 could not be matched/.test(sum));
+  // tracing did work here, so the note is about the exposure file alone
+  check("the IFRS9 mismatch is explained", /No default matched the exposure file/.test(sum));
   check("the failed validation is flagged", /<b>FAIL<\/b>/.test(sum) && /error<\/span>/.test(sum),
     "expected a FAIL with the error icon");
   check("the difference is quoted", /max cell difference 17/.test(sum));
@@ -911,6 +912,44 @@ async function scenarioV() {
   h.ctx.showResults(na, []);
   check("an unvalidatable set explains why",
     /no <code>CohortNlambda<\/code> to compare/.test(h.$get("#tab-summary").innerHTML));
+}
+
+/* ---------------- VV: a set that traced nothing at all ---------------- */
+async function scenarioVV() {
+  console.log("VV) a set that traced nothing says so, rather than blaming IFRS9 numbering");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  // the shape a run with an unmapped account column produces: every default
+  // untraced, and no overlap with the exposure file either
+  const none = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  none.sets[0].traced = 0;
+  none.sets[0].trace_rate = 0;
+  none.sets[0].traced_writeoff = 0;
+  none.sets[0].traced_ifrs9 = 0;
+  none.sets[0].untraced = none.sets[0].defaults;
+  none.sets[0].ifrs9_overlap = 0;
+  h.ctx.showResults(none, []);
+
+  const sum = h.$get("#tab-summary").innerHTML;
+  check("it says nothing traced", /Not one of the [\d,]+ defaults was traced/.test(sum), sum.slice(0, 300));
+  check("it points at the mapping", /column mapping/.test(sum));
+  // the old copy claimed the defaults traced through the write-off file, which
+  // cannot be true when nothing traced at all
+  check("it does not claim a write-off trace", !/traced through the write-off file/.test(sum),
+    "a 0% trace must not be explained as a write-off-only trace");
+  check("it does not assert a numbering difference", !/number\s+accounts differently/.test(sum));
+
+  // and a genuine IFRS9 mismatch, where tracing did work, still explains itself
+  const woOnly = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  woOnly.sets[0].ifrs9_overlap = 0;
+  h.ctx.showResults(woOnly, []);
+
+  const sum2 = h.$get("#tab-summary").innerHTML;
+  check("a write-off-only trace is still explained", /traced through the write-off file/.test(sum2));
+  check("it counts what did trace", /15,440 traced through/.test(sum2), sum2.slice(0, 300));
+  check("the cause is offered, not asserted", /may number/.test(sum2));
 }
 
 /* ---------------- W: a run stored before sizes were recorded ---------------- */
@@ -1539,7 +1578,7 @@ async function scenarioX() {
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
-                 scenarioU, scenarioV, scenarioW, scenarioX,
+                 scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
                  scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
