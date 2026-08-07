@@ -6,11 +6,20 @@ public enum SetFileKind { Exposure, Writeoff, Debug, Scenario }
 public record SetFileItem(int SetIndex, SetFileKind Kind, string OriginalFileName, Stream Content, long Length);
 
 /// <summary>
+/// One file as written: where it landed relative to the destination root, the
+/// slot it was picked for, and the name it was picked under. RunPersister walks
+/// a directory and cannot know the last two, so the receiver reports them.
+/// </summary>
+public record ReceivedFile(string RelativePath, string Role, string OriginalName);
+
+/// <summary>
 /// Where a set landed on disk, and the original names of its two mappable files.
 /// WriteOffFileName is null when the set was uploaded without one, which the
 /// engine tolerates - see SetFileReceiver's note on what that costs.
 /// </summary>
-public record ReceivedSet(string Root, string Label, string ExposureFileName, string? WriteOffFileName, int FileCount, long Bytes);
+public record ReceivedSet(
+    string Root, string Label, string ExposureFileName, string? WriteOffFileName,
+    int FileCount, long Bytes, IReadOnlyList<ReceivedFile> Files);
 
 public record SetReceiveOutcome(bool Ok, string? Error, IReadOnlyList<ReceivedSet> Sets)
 {
@@ -83,6 +92,8 @@ public class SetFileReceiver
             string setRoot = Path.Combine(destinationRoot, setIndex.ToString());
             Directory.CreateDirectory(setRoot);
 
+            List<ReceivedFile> written = new();
+
             foreach (SetFileItem item in setItems)
             {
                 string destName = item.Kind switch
@@ -97,10 +108,15 @@ public class SetFileReceiver
                 string full = Path.Combine(setRoot, destName);
                 await using FileStream file = File.Create(full);
                 await item.Content.CopyToAsync(file, ct);
+
+                written.Add(new ReceivedFile(
+                    $"{setIndex}/{destName}",
+                    item.Kind.ToString().ToLowerInvariant(),
+                    item.OriginalFileName));
             }
 
             string label = Path.GetFileNameWithoutExtension(exposureName);
-            sets.Add(new ReceivedSet(setRoot, label, exposureName, writeoffName, setItems.Count, total));
+            sets.Add(new ReceivedSet(setRoot, label, exposureName, writeoffName, setItems.Count, total, written));
         }
 
         return new SetReceiveOutcome(true, null, sets);

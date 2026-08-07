@@ -155,4 +155,44 @@ public class SetFileReceiverTests : IDisposable
         Assert.Contains("limit is 10 MB", result.Error!);
         Assert.False(Directory.Exists(Path.Combine(_root, "0")));
     }
+
+    [Fact]
+    public async Task TestReportsEachFilesRoleOriginalNameAndRelativePath()
+    {
+        SetReceiveOutcome outcome = await new SetFileReceiver().ReceiveAsync(_root, new[]
+        {
+            Item(0, SetFileKind.Exposure, "IFRS9 FILE JUNE 2025.csv", "a,b\n1,2\n"),
+            Item(0, SetFileKind.Writeoff, "2026_WRITEOFF.csv", "c,d\n3,4\n"),
+            Item(0, SetFileKind.Debug, "debug.zip", "zip"),
+        });
+
+        Assert.True(outcome.Ok, outcome.Error);
+        ReceivedSet set = Assert.Single(outcome.Sets);
+
+        // canonical on disk, original name kept alongside it
+        Assert.Equal(
+            new[] { "0/IFRS9.csv", "0/writeoff.csv", "0/debug.zip" },
+            set.Files.Select(f => f.RelativePath).ToArray());
+        Assert.Equal(
+            new[] { "exposure", "writeoff", "debug" },
+            set.Files.Select(f => f.Role).ToArray());
+        Assert.Equal("IFRS9 FILE JUNE 2025.csv",
+            set.Files.Single(f => f.Role == "exposure").OriginalName);
+        Assert.Equal("2026_WRITEOFF.csv",
+            set.Files.Single(f => f.Role == "writeoff").OriginalName);
+    }
+
+    [Fact]
+    public async Task TestRelativePathsCarryTheSetIndex()
+    {
+        SetReceiveOutcome outcome = await new SetFileReceiver().ReceiveAsync(_root, new[]
+        {
+            Item(0, SetFileKind.Exposure, "one.csv", "a\n1\n"),
+            Item(1, SetFileKind.Exposure, "two.csv", "a\n1\n"),
+        });
+
+        Assert.True(outcome.Ok, outcome.Error);
+        Assert.Equal("0/IFRS9.csv", outcome.Sets[0].Files.Single().RelativePath);
+        Assert.Equal("1/IFRS9.csv", outcome.Sets[1].Files.Single().RelativePath);
+    }
 }
