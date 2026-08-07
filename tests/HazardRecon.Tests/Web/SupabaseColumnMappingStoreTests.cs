@@ -84,4 +84,38 @@ public class SupabaseColumnMappingStoreTests
         Assert.Equal("POST", handler.Requests[1].Method);
         Assert.Contains("\"source_column\":\"Column 1\"", handler.Requests[1].Body);
     }
+
+    [Fact]
+    public async Task TestRecordRunMappingCarriesTheConfirmedHeaderReading()
+    {
+        FakeHttpMessageHandler handler = new((_, _) => (HttpStatusCode.OK, "[]"));
+        Guid runId = Guid.NewGuid();
+
+        await Store(handler).RecordRunMappingAsync(runId, "JUN2026", "exposure",
+            new Dictionary<string, string> { ["LoanAccountNumber"] = "Column 1" }, hasHeaders: false);
+
+        Assert.Contains("\"has_headers\":false", handler.Requests[1].Body);
+    }
+
+    [Fact]
+    public async Task TestGetRunHasHeadersReadsBackWhatWasRecorded()
+    {
+        FakeHttpMessageHandler handler = new((_, _) => (HttpStatusCode.OK, """[{"has_headers":false}]"""));
+
+        bool? hasHeaders = await Store(handler).GetRunHasHeadersAsync(Guid.NewGuid(), "JUN2026", "exposure");
+
+        Assert.False(hasHeaders);
+        Assert.Contains("set_key=eq.JUN2026", handler.Requests[0].Url);
+        Assert.Contains("file_kind=eq.exposure", handler.Requests[0].Url);
+    }
+
+    [Fact]
+    public async Task TestGetRunHasHeadersIsNullWhenNothingWasRecorded()
+    {
+        FakeHttpMessageHandler handler = new((_, _) => (HttpStatusCode.OK, "[]"));
+
+        bool? hasHeaders = await Store(handler).GetRunHasHeadersAsync(Guid.NewGuid(), "JUN2026", "exposure");
+
+        Assert.Null(hasHeaders);
+    }
 }

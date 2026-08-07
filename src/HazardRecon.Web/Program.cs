@@ -475,12 +475,14 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
 
         Dictionary<string, string> exposureMapping = ReadMapping(setElem, "exposure");
 
-        await columnMappingStore.RecordRunMappingAsync(runGuid, key, "exposure", exposureMapping);
-
         // the sniffer's verdict unless the user overruled it in the mapping step,
         // which decides both how the loaders address columns and which signature
-        // the reusable profile is filed under
+        // the reusable profile is filed under - and is recorded alongside the
+        // mapping so a reopened run can recompute the same signature rather than
+        // falling back to a fresh sniff
         bool exposureHasHeaders = ReadHasHeaders(setElem, "exposure") ?? files.ExposureHasHeaders;
+
+        await columnMappingStore.RecordRunMappingAsync(runGuid, key, "exposure", exposureMapping, exposureHasHeaders);
 
         CsvSniff exposureSniff = CsvSniffer.Reinterpret(CsvSniffer.Sniff(files.ExposurePath), exposureHasHeaders);
         string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
@@ -494,10 +496,9 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
         if (files.WriteOffPath != null)
         {
             Dictionary<string, string> writeoffMapping = ReadMapping(setElem, "writeoff");
-
-            await columnMappingStore.RecordRunMappingAsync(runGuid, key, "writeoff", writeoffMapping);
-
             bool writeoffHasHeaders = ReadHasHeaders(setElem, "writeoff") ?? files.WriteOffHasHeaders;
+
+            await columnMappingStore.RecordRunMappingAsync(runGuid, key, "writeoff", writeoffMapping, writeoffHasHeaders);
 
             CsvSniff writeoffSniff = CsvSniffer.Reinterpret(CsvSniffer.Sniff(files.WriteOffPath), writeoffHasHeaders);
             string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);

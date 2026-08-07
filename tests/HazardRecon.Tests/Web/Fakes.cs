@@ -253,6 +253,7 @@ public class FakeColumnMappingStore : IColumnMappingStore
 {
     public Dictionary<(Guid UserId, string FileKind, string ColumnSignature), Dictionary<string, string>> Saved { get; } = new();
     public List<(Guid RunId, string SetKey, string FileKind, IReadOnlyDictionary<string, string> Mapping)> RunMappings { get; } = new();
+    public Dictionary<(Guid RunId, string SetKey, string FileKind), bool?> RunHasHeaders { get; } = new();
 
     public Task<IReadOnlyDictionary<string, string>> GetSavedMappingAsync(
         Guid userId, string fileKind, string columnSignature, CancellationToken ct = default)
@@ -272,9 +273,14 @@ public class FakeColumnMappingStore : IColumnMappingStore
 
     public Task RecordRunMappingAsync(
         Guid runId, string setKey, string fileKind,
-        IReadOnlyDictionary<string, string> mapping, CancellationToken ct = default)
+        IReadOnlyDictionary<string, string> mapping, bool? hasHeaders = null, CancellationToken ct = default)
     {
         RunMappings.Add((runId, setKey, fileKind, mapping));
+        RunHasHeaders[(runId, setKey, fileKind)] = hasHeaders;
         return Task.CompletedTask;
     }
+
+    public Task<bool?> GetRunHasHeadersAsync(
+        Guid runId, string setKey, string fileKind, CancellationToken ct = default) =>
+        Task.FromResult(RunHasHeaders.TryGetValue((runId, setKey, fileKind), out bool? h) ? h : null);
 }

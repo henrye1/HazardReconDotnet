@@ -55,7 +55,7 @@ public class SupabaseColumnMappingStore : IColumnMappingStore
 
     public async Task RecordRunMappingAsync(
         Guid runId, string setKey, string fileKind,
-        IReadOnlyDictionary<string, string> mapping, CancellationToken ct = default)
+        IReadOnlyDictionary<string, string> mapping, bool? hasHeaders = null, CancellationToken ct = default)
     {
         string encodedSetKey = Uri.EscapeDataString(setKey);
         await _rest.SendAsync(HttpMethod.Delete,
@@ -69,9 +69,27 @@ public class SupabaseColumnMappingStore : IColumnMappingStore
             set_key = setKey,
             file_kind = fileKind,
             field_name = kv.Key,
-            source_column = kv.Value
+            source_column = kv.Value,
+            has_headers = hasHeaders
         });
 
         await _rest.SendAsync(HttpMethod.Post, RunTable, Json(rows), null, ct);
+    }
+
+    public async Task<bool?> GetRunHasHeadersAsync(
+        Guid runId, string setKey, string fileKind, CancellationToken ct = default)
+    {
+        string encodedSetKey = Uri.EscapeDataString(setKey);
+        string body = await _rest.SendAsync(HttpMethod.Get,
+            $"{RunTable}?run_id=eq.{runId}&set_key=eq.{encodedSetKey}&file_kind=eq.{fileKind}" +
+            "&select=has_headers&limit=1",
+            null, null, ct);
+
+        using JsonDocument doc = JsonDocument.Parse(body);
+        JsonElement.ArrayEnumerator rows = doc.RootElement.EnumerateArray();
+        if (!rows.MoveNext()) return null;
+
+        JsonElement hasHeaders = rows.Current.GetProperty("has_headers");
+        return hasHeaders.ValueKind == JsonValueKind.Null ? null : hasHeaders.GetBoolean();
     }
 }
