@@ -110,8 +110,8 @@ body{
 }
 .navitem:hover{background:rgba(255,255,255,.06);color:#fff}
 .navitem.on{background:rgba(255,255,255,.12);border-right-color:var(--cl-action-color);color:#fff}
-/* Reports and Help are placeholders in the reference too. Dimmed further than an
-   inactive-but-clickable item so they do not invite a click that does nothing. */
+/* Reports is a placeholder in the reference too. Dimmed further than an
+   inactive-but-clickable item so it does not invite a click that does nothing. */
 .navitem.dead{cursor:default;opacity:.35}
 .navitem.dead:hover{background:transparent;color:rgba(255,255,255,.62)}
 
@@ -483,6 +483,28 @@ table.grid .found{font-size:16px;color:var(--cl-action-color);vertical-align:-3p
 table.grid .missing{font-size:16px;color:var(--cl-error-color);vertical-align:-3px;margin-right:6px}
 .runopts{display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap}
 .runopts .actions{margin-left:auto}
+
+/* ---------- help ---------- */
+/* The help page is long by design, so it opens with jump links. They are anchors
+   rather than buttons: the browser's own fragment scrolling is all that is
+   wanted, and it keeps the page usable with JS having done nothing but show it. */
+.helptoc{
+  display:flex;flex-wrap:wrap;gap:8px;
+  background:#fff;border-radius:var(--border-radius);outline:var(--card-outline);
+  padding:16px 18px;
+}
+.helptoc a{
+  font-size:13px;font-weight:600;color:var(--cl-primary-color);text-decoration:none;
+  background:var(--cl-primary-50);padding:5px 11px;border-radius:999px;
+  transition:background var(--transition-fast);
+}
+.helptoc a:hover{background:var(--cl-block-accent-color);text-decoration:underline}
+/* a jumped-to card would otherwise land with its heading under the page header */
+#screen-help .card{scroll-margin-top:20px}
+/* the reference lists read better with a little more air than the wizard's */
+#screen-help .reqs{gap:16px}
+#screen-help table.grid td{vertical-align:top}
+#screen-help table.grid th:first-child,#screen-help table.grid td:first-child{white-space:nowrap}
 
 /* ---------- messages ---------- */
 .err{
