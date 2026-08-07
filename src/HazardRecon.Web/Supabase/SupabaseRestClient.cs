@@ -53,5 +53,34 @@ public class SupabaseRestClient : IDisposable
         return body;
     }
 
+    /// <summary>
+    /// Streams a GET straight into a file. Separate from SendAsync because that
+    /// reads the whole body into a string, which a debug file of several hundred
+    /// megabytes must not do. Nothing is written unless the response succeeds, so
+    /// a failure cannot leave a truncated file behind.
+    /// </summary>
+    public async Task DownloadToFileAsync(string path, string destinationPath, CancellationToken ct = default)
+    {
+        using HttpRequestMessage request = new(HttpMethod.Get, _options.BaseUrl + path);
+        request.Headers.TryAddWithoutValidation("apikey", _options.ServiceRoleKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ServiceRoleKey);
+
+        using HttpResponseMessage response =
+            await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            string body = await response.Content.ReadAsStringAsync(ct);
+            throw new SupabaseException((int)response.StatusCode,
+                $"Supabase {(int)response.StatusCode} for GET {path}: {body}");
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+
+        await using Stream source = await response.Content.ReadAsStreamAsync(ct);
+        await using FileStream destination = File.Create(destinationPath);
+        await source.CopyToAsync(destination, ct);
+    }
+
     public void Dispose() => _http.Dispose();
 }

@@ -19,4 +19,12 @@ public interface IFileStore
     /// folder is not itself an object.
     /// </summary>
     Task DeletePathsAsync(IReadOnlyList<string> storagePaths, CancellationToken ct = default);
+
+    /// <summary>
+    /// Writes a stored object to a local path, creating parent directories.
+    /// Streamed, not buffered: run inputs include debug files of hundreds of
+    /// megabytes. Throws if the object is not there, rather than leaving an empty
+    /// file that would read as a valid but empty input.
+    /// </summary>
+    Task DownloadToFileAsync(string storagePath, string destinationPath, CancellationToken ct = default);
 }

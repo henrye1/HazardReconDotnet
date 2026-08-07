@@ -85,4 +85,28 @@ public class SupabaseFileStoreTests
 
         Assert.Single(handler.Requests);
     }
+
+    [Fact]
+    public async Task TestDownloadsAnObjectStraightToAFile()
+    {
+        FakeHttpMessageHandler handler = new((_, _) => (HttpStatusCode.OK, "account,balance\n1,2\n"));
+
+        string dest = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")[..8] + ".csv");
+        await Store(handler).DownloadToFileAsync("u/r/input/0/IFRS9.csv", dest);
+
+        Assert.Equal("account,balance\n1,2\n", await File.ReadAllTextAsync(dest));
+        Assert.Contains("/storage/v1/object/runs/u/r/input/0/IFRS9.csv", handler.Requests[0].Url);
+        File.Delete(dest);
+    }
+
+    [Fact]
+    public async Task TestAMissingObjectThrowsRatherThanWritingAnEmptyFile()
+    {
+        FakeHttpMessageHandler handler = new((_, _) => (HttpStatusCode.NotFound, "{\"error\":\"not found\"}"));
+
+        string dest = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")[..8] + ".csv");
+
+        await Assert.ThrowsAsync<SupabaseException>(() => Store(handler).DownloadToFileAsync("u/r/input/0/gone.csv", dest));
+        Assert.False(File.Exists(dest));
+    }
 }

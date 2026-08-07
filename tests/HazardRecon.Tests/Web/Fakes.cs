@@ -62,6 +62,16 @@ public class FakeFileStore : IFileStore
         }
         return Task.CompletedTask;
     }
+
+    public Task DownloadToFileAsync(string storagePath, string destinationPath, CancellationToken ct = default)
+    {
+        if (!Objects.TryGetValue(storagePath, out byte[]? bytes))
+            throw new FileNotFoundException($"nothing stored at {storagePath}");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+        File.WriteAllBytes(destinationPath, bytes);
+        return Task.CompletedTask;
+    }
 }
 
 public class FakeRunStore : IRunStore

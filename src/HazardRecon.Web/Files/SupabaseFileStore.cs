@@ -76,4 +76,7 @@ public class SupabaseFileStore : IFileStore
             $"/storage/v1/object/{_bucket}",
             Json(new { prefixes = storagePaths }), null, ct);
     }
+
+    public Task DownloadToFileAsync(string storagePath, string destinationPath, CancellationToken ct = default) =>
+        _rest.DownloadToFileAsync($"/storage/v1/object/{_bucket}/{storagePath}", destinationPath, ct);
 }
