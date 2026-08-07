@@ -586,7 +586,10 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         _factory.RunStore.Runs.Add(new RunRecord
         {
             Id = run, UserId = owner,
-            SetLabels = new List<string> { "JUNE 2026" },
+            // matches the label SetFileReceiver derives from the exposure file's
+            // original name below, so a reuse looking up this set's key by label
+            // (as /api/discover does) finds the same row a real run would have
+            SetLabels = new List<string> { "IFRS9 FILE JUNE 2025" },
             InputsPurgedAt = inputsPurgedAt
         });
 
@@ -697,5 +700,30 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpResponseMessage res = await client.PostAsync("/api/discover", form);
 
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task TestReopeningARunReappliesItsConfirmedHeaderReading()
+    {
+        HttpClient client = _factory.CreateClient();
+        Guid previous = SeedRunWithStoredInputs();
+
+        // the exposure file's first row reads as a header by the sniffer's own
+        // guess (all text, no digits) - recording that the run had confirmed
+        // "not a header" is what proves the override, not the default, is applied
+        string previousKey = HazardRecon.Core.Services.InputDiscoverer.SetKeyFromFolder("IFRS9 FILE JUNE 2025");
+        _factory.MappingStore.RunHasHeaders[(previous, previousKey, "exposure")] = false;
+
+        using MultipartFormDataContent form = new();
+        form.Add(new StringContent(previous.ToString()), "based_on_run");
+        form.Add(new StringContent("""[{"set":0,"roles":["exposure","writeoff","debug"]}]"""), "reuse");
+
+        HttpResponseMessage res = await client.PostAsync("/api/discover", form);
+        string body = await res.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        using JsonDocument doc = JsonDocument.Parse(body);
+        JsonElement exposureView = doc.RootElement.GetProperty("mapping")[0].GetProperty("exposure");
+        Assert.False(exposureView.GetProperty("has_headers").GetBoolean());
     }
 }

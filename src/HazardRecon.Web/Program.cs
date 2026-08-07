@@ -234,6 +234,14 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     // rebuilt from that run's stored objects and handed to the receiver as if
     // they had been uploaded, so nothing below needs to know the difference.
     List<IDisposable> reusedHandles = new();
+
+    // The header reading confirmed for a reused exposure/write-off file, keyed by
+    // the (client-numbered) set index reuse requests share with InputReuse - so a
+    // reopened run recomputes the same column signature its saved mapping was
+    // filed under, instead of a fresh sniff that may read the file differently.
+    Dictionary<int, bool> exposureHeaderOverrides = new();
+    Dictionary<int, bool> writeoffHeaderOverrides = new();
+
     string? basedOn = form["based_on_run"].FirstOrDefault();
 
     if (!string.IsNullOrEmpty(basedOn))
@@ -290,6 +298,27 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
 
             items.AddRange(reuse.Items);
             reusedHandles.AddRange(reuse.Open);
+
+            List<string> previousSetKeys = InputDiscoverer.SetKeysForLabels(previous.SetLabels).ToList();
+            foreach (ReuseRequest request in requests)
+            {
+                if (request.SetIndex >= previousSetKeys.Count) continue;
+                string previousKey = previousSetKeys[request.SetIndex];
+
+                if (request.Roles.Contains("exposure"))
+                {
+                    bool? hh = await columnMappingStore.GetRunHasHeadersAsync(
+                        previousRun, previousKey, "exposure", ctx.RequestAborted);
+                    if (hh != null) exposureHeaderOverrides[request.SetIndex] = hh.Value;
+                }
+
+                if (request.Roles.Contains("writeoff"))
+                {
+                    bool? hh = await columnMappingStore.GetRunHasHeadersAsync(
+                        previousRun, previousKey, "writeoff", ctx.RequestAborted);
+                    if (hh != null) writeoffHeaderOverrides[request.SetIndex] = hh.Value;
+                }
+            }
         }
     }
 
@@ -384,8 +413,16 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         string writeOffCandidate = Path.Combine(rs.Root, "writeoff.csv");
         string? writeOffPath = File.Exists(writeOffCandidate) ? writeOffCandidate : null;
 
+        // the set root is named for its client-side index ("input/0", "input/1", ...)
+        int setIndex = int.Parse(Path.GetFileName(rs.Root));
+
         CsvSniff exposureSniff = CsvSniffer.Sniff(exposurePath);
+        if (exposureHeaderOverrides.TryGetValue(setIndex, out bool exposureOverride))
+            exposureSniff = CsvSniffer.Reinterpret(exposureSniff, exposureOverride);
+
         CsvSniff? writeoffSniff = writeOffPath == null ? null : CsvSniffer.Sniff(writeOffPath);
+        if (writeoffSniff != null && writeoffHeaderOverrides.TryGetValue(setIndex, out bool writeoffOverride))
+            writeoffSniff = CsvSniffer.Reinterpret(writeoffSniff, writeoffOverride);
 
         job.MappableFiles[key] = new MappableSetFiles(
             writeOffPath, writeoffSniff?.HasHeaders ?? false, exposurePath, exposureSniff.HasHeaders);
