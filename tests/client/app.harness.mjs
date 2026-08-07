@@ -1543,6 +1543,121 @@ async function scenarioDS() {
   check("the Run button is given back", h.$get("#btn-run").disabled === false);
 }
 
+/* ---------------- DT: reused files behave like picked ---------------- */
+async function scenarioDT() {
+  console.log("DT) a slot filled from a past run renders and uploads like a picked file");
+  const posted = [];
+  const fields = [];
+  const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/discover") {
+      (opts.body._parts || []).forEach(p => {
+        if (p.filename === undefined) fields.push({ field: p.field, value: p.value });
+        else posted.push(p);
+      });
+      return Promise.resolve(jsonRes(200,
+        { run_id: "RID-NEW", inventory: { root: "r", sets: [] }, problems: [], mapping: [] }));
+    }
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  // as "Run again" builds it: every slot from the stored run
+  h.ctx.adoptStoredInputs("RID-OLD", [{
+    index: 0, label: "JUNE 2026",
+    files: [
+      { role: "exposure", name: "IFRS9 FILE JUNE 2025.csv", size_bytes: 12 * 1024 * 1024 },
+      { role: "debug", name: "debug.zip", size_bytes: 13 * 1024 * 1024 },
+    ],
+  }]);
+
+  check("the stored names are shown", /IFRS9 FILE JUNE 2025\.csv · 12\.0 MB/.test(slotSubText(h, 0, "exposure")),
+    `sub='${slotSubText(h, 0, "exposure")}'`);
+  check("the set counts them as chosen", /2 of 4 files chosen/.test(setHead(h, 0)), `head='${setHead(h, 0)}'`);
+  check("check columns is enabled", h.$get("#btn-check").disabled === false);
+
+  // replace only the exposure file
+  pickInto(h, 0, "exposure", [mkFile("NEW_IFRS9.csv", 2048)]);
+  await h.ctx.discover();
+
+  check("only the replaced file is uploaded",
+    posted.length === 1 && posted[0].field === "set0.Exposure",
+    JSON.stringify(posted.map(p => p.field)));
+  check("the previous run is named", fields.some(f => f.field === "based_on_run" && f.value === "RID-OLD"),
+    JSON.stringify(fields));
+
+  const reuse = fields.find(f => f.field === "reuse");
+  check("only the untouched role is reused", reuse !== undefined &&
+    JSON.parse(reuse.value).length === 1 &&
+    JSON.parse(reuse.value)[0].roles.join() === "debug",
+    reuse ? reuse.value : "no reuse field");
+}
+
+/* ---------------- DU: a fully replaced set stops reusing ---------------- */
+async function scenarioDU() {
+  console.log("DU) replacing every slot sends no reuse request at all");
+  const fields = [];
+  const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/discover") {
+      (opts.body._parts || []).forEach(p => { if (p.filename === undefined) fields.push(p.field); });
+      return Promise.resolve(jsonRes(200,
+        { run_id: "RID-NEW", inventory: { root: "r", sets: [] }, problems: [], mapping: [] }));
+    }
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  h.ctx.adoptStoredInputs("RID-OLD", [{
+    index: 0, label: "JUNE",
+    files: [{ role: "exposure", name: "e.csv", size_bytes: 10 }, { role: "debug", name: "d.zip", size_bytes: 10 }],
+  }]);
+
+  pickInto(h, 0, "exposure", [mkFile("new-e.csv", 10)]);
+  pickInto(h, 0, "debug", [mkFile("new-d.zip", 10)]);
+  await h.ctx.discover();
+
+  check("no reuse field is sent", !fields.includes("reuse"), JSON.stringify(fields));
+  check("no previous run is named", !fields.includes("based_on_run"), JSON.stringify(fields));
+}
+
+/* ---------------- DUU: a set added on a re-run is uploaded in full ---------------- */
+async function scenarioDUU() {
+  console.log("DUU) adding a set to a re-run uploads it whole and reuses only the old one");
+  const posted = [];
+  let reuseValue = null;
+  const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/discover") {
+      (opts.body._parts || []).forEach(p => {
+        if (p.filename === undefined) { if (p.field === "reuse") reuseValue = p.value; }
+        else posted.push(p.field);
+      });
+      return Promise.resolve(jsonRes(200,
+        { run_id: "RID-NEW", inventory: { root: "r", sets: [] }, problems: [], mapping: [] }));
+    }
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  h.ctx.adoptStoredInputs("RID-OLD", [{
+    index: 0, label: "JUNE",
+    files: [{ role: "exposure", name: "e.csv", size_bytes: 10 }, { role: "debug", name: "d.zip", size_bytes: 10 }],
+  }]);
+
+  // a second period, picked fresh
+  h.$get("#btn-add-set")._fire("click");
+  pickInto(h, 1, "exposure", [mkFile("july-e.csv", 10)]);
+  pickInto(h, 1, "debug", [mkFile("july-d.zip", 10)]);
+  await h.ctx.discover();
+
+  check("only the new set's files are uploaded",
+    posted.join() === "set1.Exposure,set1.Debug", JSON.stringify(posted));
+  check("only the old set is reused", reuseValue !== null &&
+    JSON.parse(reuseValue).length === 1 && JSON.parse(reuseValue)[0].set === 0,
+    reuseValue || "no reuse field");
+}
+
 /* ---------------- Z: the Back button uses the same path ---------------- */
 async function scenarioZ() {
   console.log("Z) Back on the confirm step returns to folders");
@@ -1579,6 +1694,7 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL,
+                 scenarioDT, scenarioDU, scenarioDUU]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

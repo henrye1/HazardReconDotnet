@@ -554,6 +554,31 @@ const setComplete = (set) => FILE_KINDS.every(k => !k.required || set.files[k.ke
 
 const setStarted = (set) => kindsPicked(set).length > 0;
 
+/* A slot may hold files the browser never opened: the ones a past run was given,
+   which are still in object storage. They render exactly like a picked file - a
+   name and a size is all a slot shows - and are sent as a reuse request instead
+   of bytes. */
+const isStored = (f) => !!f && !!f.fromRun;
+const storedFile = (runId, f) => ({ name: f.name, size: f.size_bytes, fromRun: runId });
+
+/* The run whose stored files fill the slots, or null once nothing is reused. */
+let BASED_ON = null;
+
+/* Fills the picker from a past run's stored inputs. */
+function adoptStoredInputs(runId, sets) {
+  BASED_ON = runId;
+  SETS = sets.map(s => {
+    const set = emptySet();
+    (s.files || []).forEach(f => {
+      const kind = FILE_KINDS.find(k => k.key === f.role);
+      if (kind) set.files[kind.key].push(storedFile(runId, f));
+    });
+    return set;
+  });
+  if (!SETS.length) SETS = [emptySet()];
+  renderSets();
+}
+
 const sizeLabel = (bytes) => bytes >= 1024 * 1024
   ? (bytes / (1024 * 1024)).toFixed(1) + " MB"
   : Math.max(1, Math.round(bytes / 1024)) + " KB";
@@ -733,13 +758,30 @@ function discover() {
   // the set it belongs to and the role it was picked for, and stores it under the
   // canonical name discovery looks for. Sets are numbered over those that were
   // filled in, so clearing the middle one does not leave a gap.
+  const reuse = [];
+
   SETS.forEach(set => {
     const kinds = kindsPicked(set);
     if (!kinds.length) return;
+
+    // the files this upload carries
     kinds.forEach(kind =>
-      set.files[kind.key].forEach(f => fd.append("set" + sets + "." + kind.field, f, f.name)));
+      set.files[kind.key]
+        .filter(f => !isStored(f))
+        .forEach(f => fd.append("set" + sets + "." + kind.field, f, f.name)));
+
+    // and the roles the server should rebuild from the previous run, numbered
+    // with the same counter so the two can never disagree
+    const reused = kinds.filter(kind => set.files[kind.key].some(isStored)).map(kind => kind.key);
+    if (reused.length) reuse.push({ set: sets, roles: reused });
+
     sets += 1;
   });
+
+  if (reuse.length && BASED_ON) {
+    fd.append("based_on_run", BASED_ON);
+    fd.append("reuse", JSON.stringify(reuse));
+  }
 
   if (sets === 0) return Promise.reject(new Error("Please choose the files for at least one set."));
 
