@@ -258,3 +258,132 @@ the same class of quietly-wrong result as the 0% trace this follows.
   make purging the first run corrupt the second. Accepted deliberately.
 - **Old runs show canonical filenames.** Unavoidable — the originals were never
   recorded. Only affects runs created before the migration.
+
+---
+
+## Addendum 2026-08-07: reopening a failed or draft run
+
+Everything above was written for "Run again" on a **done** run, reached from its
+detail screen. This addendum extends the same mechanism to a run that never
+finished — because it errored, was interrupted, or was simply abandoned after
+its files were picked — so it can be reopened from the *history list*, where
+those runs actually sit today. Nothing below changes a single line of the design
+above; it only widens who can reach `#btn-rerun`'s handler and where from.
+
+### Decision A — what "draft" is
+
+**Chosen: a draft is the existing `ready` status, not a new one.**
+
+`/api/discover` already creates the `RunRecord` at `status_id` = `ready`
+(`Program.cs:217`, `RunStatus.Ready` defaults `RunRecord.StatusId`) *before* the
+user ever confirms mapping or presses "Run reconciliation". The only thing that
+moves a run out of `ready` is `/api/run` calling
+`UpdateStatusAsync(runGuid, "running", ...)` (`Program.cs:492`). A user who
+uploads files, gets a mapping back, and then closes the tab leaves a run sitting
+in `ready` forever — which is exactly "saved but never completed." The client
+already treats it that way: `STATUS_LABEL.ready = "Draft"` (`app.js:250`) has
+been showing the word "Draft" in the history table since before this task
+started; the row is simply not clickable yet.
+
+Discarded: adding a fifth-plus status value (`draft`) alongside `ready`. That
+would require a migration to `RunStatus`'s hardcoded id map, a backfill
+decision for existing `ready` rows, and two names for one state — every reader
+that currently branches on `ready` (`Program.cs:484`, the delete-button gate at
+`app.js:367`) would have to learn a second spelling. `ready` already means
+"created, not yet started"; `draft` would mean the same thing under a new name.
+
+### Decision B — mutate in place, or mint a new run
+
+**Chosen: reopening always mints a new run, exactly as "Run again" already does
+for a done run. The original `ready`/`error`/`interrupted` row is left as-is.**
+
+This falls out of the existing design rather than being a fresh choice:
+`/api/discover` unconditionally calls `runStore.CreateAsync(...)`
+(`Program.cs:217`) and the base design's own non-goal says re-running "always
+mints a new run id and a new history entry." Reopening a draft or a failed run
+through that same endpoint (with `based_on_run` pointing at it) inherits that
+behaviour for free. Giving `ready`/`error`/`interrupted` a *second*, mutating
+code path — patch the same row's inputs and flip it back to `ready` — would mean
+"Run again" has two implementations that must stay in sync, one of which the
+base plan's own tests never exercise.
+
+Accepted cost: a user who repeatedly reopens the same abandoned draft
+accumulates one `ready` history row per attempt. The existing per-run delete
+button (`d6dfcac`) is the cleanup path for that, so no new one is needed.
+
+Discarded: mutating the original row for `ready` specifically (it has no
+output to lose) while still minting a new run for `error`/`interrupted` (which
+do have logs worth keeping). Rejected for the same reason as above, doubled —
+now there would be *three* code paths (done, draft, failed) instead of one.
+
+### Decision C — which wizard settings are already persisted
+
+| Setting | Persisted today? | Where |
+|---|---|---|
+| Input files (per set, per role) | Yes | `run_files`, once the base plan's Tasks 1–8 expose and reuse them |
+| Model | Yes | `runs.model_id` (`RunRecord.ModelId`) |
+| Period / set labels | Yes | `runs.set_labels` (`RunRecord.SetLabels`) |
+| Column mapping (field → source column) | Yes, indirectly | `saved_column_mappings`, keyed by `(user_id, file_kind, column_signature)` — re-sniffing a reused file recomputes the same signature and `/api/discover` resolves the same mapping automatically. No read of `run_set_column_mappings` (the per-run audit trail) is needed or added. |
+| Header / first-row override | **No** | Only lives in the in-memory `JobState.ColumnMaps` for the lifetime of that job (evicted per `62e387e`). Not a column anywhere. |
+
+The header override is the one gap. `ColumnSignature.Compute` runs on the
+*reinterpreted* sniff (`5721fc8`), so if the user had flipped "first row is a
+header" and that flip isn't reproduced on reopen, discovery recomputes a
+different signature than the one the saved mapping was filed under, and the
+mapping step comes back showing fresh guesses instead of the confirmed one.
+
+**Decision: extend `run_set_column_mappings` with a nullable
+`has_headers boolean`, written by the existing `RecordRunMappingAsync` call
+alongside the field mapping it already writes, one row per
+(run, set, file_kind) same as today.** A getter is added to
+`IColumnMappingStore` to read it back for a given run+set+file_kind, used only
+by the reopen path to pre-seed `MappableSetFiles`'s `HasHeaders` before the
+first sniff, so the recomputed signature matches what was confirmed.
+
+Discarded: a new table, or a column on `runs`. The choice is already per
+(run, set, file_kind) — exposure and write-off can be toggled independently —
+which `run_set_column_mappings` already keys on exactly. Duplicating that key
+in a second table would only invite the two from drifting apart.
+
+Discarded: reconstructing the choice from the saved mapping's column names
+(e.g. "if the saved mapping points at a name that isn't in the freshly sniffed
+header row, the file must not have headers"). Too fragile — a positionally
+mapped file can have source columns that happen to collide with header text.
+
+### What this addendum actually changes in the client and server
+
+1. **History rows for `ready`, `error` and `interrupted` become clickable**,
+   alongside the existing `done` row behaviour (`app.js:354-372`). `running` is
+   excluded — its input directory may still be in use by the in-flight job.
+2. Clicking one of those rows calls the reopen flow directly (there is no
+   detail screen for a run with no `run_results` row to show), rather than
+   `openRun`, which silently no-ops today when `j.result` is absent
+   (`app.js:397-401`). `rerunFromDetail` (base plan Task 10) is generalised to
+   take an explicit run id so both the detail screen's "Run again" button and a
+   history row can call it.
+3. `GET /api/runs/{rid}/inputs` and `/api/discover`'s `based_on_run` handling
+   need **no status check at all** — they already only look at `user_id` and
+   `inputs_purged_at`, so a draft's or a failed run's inputs come back exactly
+   like a done run's. This is the payoff of the base plan's design: status was
+   never part of its contract.
+4. `run_set_column_mappings` gains `has_headers`; the reopen path reads it per
+   set/file-kind and passes it into the same `ReadHasHeaders`-shaped override
+   `5721fc8` already wired into `/api/discover/mapping`, applied this time to
+   the *initial* discovery sniff rather than only a client-confirmed one.
+
+### Regression coverage added for this addendum
+
+- Reopening a run with status `error` or `interrupted` returns its inputs and
+  settings exactly like a `done`/`ready` one (status-agnostic by construction,
+  asserted directly).
+- A history row for `ready`/`error`/`interrupted` is clickable and reopens the
+  wizard; a `running` row is not.
+- Replacing exactly one file in a reopened draft/failed run reuses the rest
+  server-side (already covered by the base plan's Task 8/9 tests, re-asserted
+  against a non-done run's `based_on_run`).
+- Reopening a run whose `inputs_purged_at` is set reports the expiry and shows
+  empty, re-pickable slots (already covered by the base plan's Task 5/10
+  tests; re-asserted for a non-done source run).
+- The header override round-trips: confirming "first row is not a header" on a
+  file with no natural header, reopening the run, and re-discovering resolves
+  to the same saved mapping without the user re-toggling anything.
