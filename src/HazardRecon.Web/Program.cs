@@ -926,6 +926,39 @@ app.MapGet("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
     });
 }).RequireAuthorization();
 
+// GET /api/runs/{rid}/inputs - the files this run was given, so "Run again" can
+// put them back on the Files step. Inputs are kept 30 days (InputPurger); after
+// that the run says so and asks for them again. Status-agnostic on purpose: a
+// draft (ready), a failed (error/interrupted) and a done run all read the same
+// way, since none of that depends on how the run turned out.
+app.MapGet("/api/runs/{rid}/inputs", async (string rid, HttpContext ctx) =>
+{
+    Guid? userId = SupabaseJwt.UserId(ctx.User);
+    if (userId == null) return Results.Unauthorized();
+
+    if (!Guid.TryParse(rid, out Guid runGuid)) return Results.NotFound(new { error = "Unknown run." });
+
+    // 404 rather than 403 for someone else's run, as elsewhere: a 403 confirms it exists
+    RunRecord? run = await runStore.GetAsync(runGuid, userId.Value, ctx.RequestAborted);
+    if (run == null) return Results.NotFound(new { error = "Unknown run." });
+
+    if (run.InputsPurgedAt != null)
+        return Results.Ok(new { inputs_purged = true, sets = Array.Empty<object>() });
+
+    IReadOnlyList<RunFileRecord> files = await runFileStore.ListAsync(runGuid, userId.Value, ctx.RequestAborted);
+
+    return Results.Ok(new
+    {
+        inputs_purged = false,
+        sets = RunInputs.Describe(files, run.SetLabels).Select(s => new
+        {
+            index = s.Index,
+            label = s.Label,
+            files = s.Files.Select(f => new { role = f.Role, name = f.Name, size_bytes = f.SizeBytes })
+        })
+    });
+}).RequireAuthorization();
+
 // DELETE /api/runs/{rid} - removes a run for good: its stored objects, its
 // working folder and its row, which cascades to every child table. Offered from
 // the run list and the run detail, both behind a confirmation.
