@@ -1,5 +1,6 @@
 using System.Text;
 using HazardRecon.Web.Runs;
+using HazardRecon.Web.Uploads;
 using Xunit;
 
 namespace HazardRecon.Tests.Web;
@@ -123,5 +124,43 @@ public class RunPersisterTests : IDisposable
         // the 30-day purge deletes the input prefix only, so the split has to hold
         Assert.Contains($"{UserId}/{RunId}/input/debug.zip", files.Objects.Keys);
         Assert.Contains($"{UserId}/{RunId}/output/debug.zip", files.Objects.Keys);
+    }
+
+    [Fact]
+    public async Task TestRecordsRoleAndOriginalNameForDescribedFiles()
+    {
+        WriteFile("0/IFRS9.csv", "a\n1\n");
+        WriteFile("0/debug.zip", "zip");
+
+        FakeFileStore files = new();
+        FakeRunFileStore index = new();
+
+        var described = new Dictionary<string, ReceivedFile>
+        {
+            ["0/IFRS9.csv"] = new("0/IFRS9.csv", "exposure", "IFRS9 FILE JUNE 2025.csv"),
+            ["0/debug.zip"] = new("0/debug.zip", "debug", "debug.zip"),
+        };
+
+        await new RunPersister(files, index)
+            .PersistDirectoryAsync(UserId, RunId, "input", _dir, describedBy: described);
+
+        RunFileRecord exposure = index.Files.Single(f => f.RelativePath == "0/IFRS9.csv");
+        Assert.Equal("exposure", exposure.Role);
+        Assert.Equal("IFRS9 FILE JUNE 2025.csv", exposure.OriginalName);
+    }
+
+    [Fact]
+    public async Task TestLeavesRoleAndNameNullWhenNothingDescribesTheFile()
+    {
+        // outputs are persisted the same way and have no slot
+        WriteFile("workbook.xlsx", "x");
+
+        FakeRunFileStore index = new();
+        await new RunPersister(new FakeFileStore(), index)
+            .PersistDirectoryAsync(UserId, RunId, "output", _dir);
+
+        RunFileRecord only = Assert.Single(index.Files);
+        Assert.Null(only.Role);
+        Assert.Null(only.OriginalName);
     }
 }

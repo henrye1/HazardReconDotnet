@@ -1,4 +1,5 @@
 using HazardRecon.Web.Files;
+using HazardRecon.Web.Uploads;
 
 namespace HazardRecon.Web.Runs;
 
@@ -47,6 +48,7 @@ public class RunPersister
         string kind,
         string directory,
         string? setKey = null,
+        IReadOnlyDictionary<string, ReceivedFile>? describedBy = null,
         CancellationToken ct = default)
     {
         List<RunFileRecord> stored = new();
@@ -64,6 +66,9 @@ public class RunPersister
                 await using FileStream content = File.OpenRead(path);
                 await _files.UploadAsync(storagePath, content, ContentType(relative), ct);
 
+                ReceivedFile? described = null;
+                describedBy?.TryGetValue(relative, out described);
+
                 stored.Add(new RunFileRecord
                 {
                     RunId = runId,
@@ -72,7 +77,9 @@ public class RunPersister
                     SetKey = setKey,
                     RelativePath = relative,
                     StoragePath = storagePath,
-                    SizeBytes = new FileInfo(path).Length
+                    SizeBytes = new FileInfo(path).Length,
+                    Role = described?.Role,
+                    OriginalName = described?.OriginalName
                 });
             }
             catch (Exception)

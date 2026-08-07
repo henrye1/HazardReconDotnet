@@ -257,7 +257,11 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     {
         try
         {
-            await persister.PersistDirectoryAsync(userId.Value, created.Id, "input", indir);
+            await persister.PersistDirectoryAsync(
+                userId.Value, created.Id, "input", indir,
+                describedBy: received.Sets
+                    .SelectMany(s => s.Files)
+                    .ToDictionary(f => f.RelativePath));
         }
         catch (Exception ex)
         {
