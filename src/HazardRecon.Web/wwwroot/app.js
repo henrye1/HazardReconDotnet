@@ -1354,7 +1354,48 @@ function startRun(hasRetried) {
 }
 
 $("#btn-run").addEventListener("click", beginRun);
-$("#btn-rerun").addEventListener("click", beginRun);
+
+/* Run again reopens the run's inputs rather than starting a run: the point of it
+   is being able to swap one file. The files are fetched from the run rather than
+   the page, because a file input cannot be refilled from script and the page may
+   have been reloaded since.
+
+   Takes an explicit run id, defaulting to RUN_ID, because it is reachable from
+   two places: the detail screen's "Run again" button (where RUN_ID is already
+   that run) and a history row for a draft or failed run, which has no detail
+   screen to open first. */
+function rerunFromDetail(fromId) {
+  const from = fromId || RUN_ID;
+  if (!from) return;
+
+  showScreen("wizard");
+  setStep(0);
+  RESULT = null;
+  setChatOpen(false);
+  $("#files-expired").classList.add("hide");
+
+  api("/api/runs/" + from + "/inputs")
+    .then(readJson)
+    .then(({ ok, j }) => {
+      if (!ok || !j) throw new Error((j && j.error) || "Could not read that run's files.");
+
+      if (j.inputs_purged || !(j.sets || []).length) {
+        BASED_ON = null;
+        SETS = [emptySet()];
+        renderSets();
+        $("#files-expired").textContent =
+          "The files from that run are no longer stored — inputs are kept for 30 days. " +
+          "Please choose them again.";
+        $("#files-expired").classList.remove("hide");
+        return;
+      }
+
+      adoptStoredInputs(from, j.sets);
+    })
+    .catch(e => showError($("#step-files"), e.message));
+}
+
+$("#btn-rerun").addEventListener("click", () => rerunFromDetail());
 
 /* Back to the folders, keeping whatever was picked - the inventory is discarded
    because the folders may change before the next check. */

@@ -1658,6 +1658,72 @@ async function scenarioDUU() {
     reuseValue || "no reuse field");
 }
 
+/* ---------------- DV: Run again opens the files, it does not start a run ---------------- */
+async function scenarioDV() {
+  console.log("DV) Run again returns to the Files step with the stored files shown");
+  let runCalls = 0;
+  const h = bootAuth({ access_token: "tok-abc" }, (url) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/run") { runCalls++; return Promise.resolve(jsonRes(200, { status: "running" })); }
+    if (/\/inputs$/.test(url)) return Promise.resolve(jsonRes(200, {
+      inputs_purged: false,
+      sets: [{ index: 0, label: "JUNE 2026", files: [
+        { role: "exposure", name: "IFRS9 FILE JUNE 2025.csv", size_bytes: 12582912 },
+        { role: "writeoff", name: "2026_WRITEOFF.csv", size_bytes: 9437184 },
+        { role: "debug", name: "debug.zip", size_bytes: 1048576 },
+      ] }],
+    }));
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  h.ctx.showInventory(INVENTORY_FIX);
+  h.ctx.showResults(DETAIL_RESULT, []);
+  h.$get("#btn-rerun")._fire("click");
+  for (let i = 0; i < 6; i++) await tick();
+
+  check("no run was started", runCalls === 0, `run calls=${runCalls}`);
+  check("the wizard is showing", !h.$get("#screen-wizard").classList.contains("hide"));
+  check("the detail screen is left", h.$get("#screen-detail").classList.contains("hide"));
+  check("it lands on the files step", !h.$get("#step-files").classList.contains("hide"));
+  check("the title is step 1", /Choose your input files/.test(h.$get("#step-title").textContent),
+    `title='${h.$get("#step-title").textContent}'`);
+  check("the stored exposure file is named",
+    /IFRS9 FILE JUNE 2025\.csv/.test(slotSubText(h, 0, "exposure")), `sub='${slotSubText(h, 0, "exposure")}'`);
+  check("the stored write-off file is named",
+    /2026_WRITEOFF\.csv/.test(slotSubText(h, 0, "writeoff")), `sub='${slotSubText(h, 0, "writeoff")}'`);
+  check("check columns is offered", h.$get("#btn-check").disabled === false);
+  check("no expiry notice is shown", h.$get("#files-expired").classList.contains("hide"));
+
+  // splitting the two buttons must not stop the confirm step starting a run
+  h.$get("#btn-run")._fire("click");
+  for (let i = 0; i < 4; i++) await tick();
+  check("Run reconciliation still starts a run", runCalls === 1, `run calls=${runCalls}`);
+}
+
+/* ---------------- DW: Run again on a purged run ---------------- */
+async function scenarioDW() {
+  console.log("DW) Run again on a run whose inputs expired asks for them again");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (/\/inputs$/.test(url))
+      return Promise.resolve(jsonRes(200, { inputs_purged: true, sets: [] }));
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  h.ctx.showInventory(INVENTORY_FIX);
+  h.ctx.showResults(DETAIL_RESULT, []);
+  h.$get("#btn-rerun")._fire("click");
+  for (let i = 0; i < 6; i++) await tick();
+
+  check("it still lands on the files step", !h.$get("#step-files").classList.contains("hide"));
+  check("the expiry is explained", !h.$get("#files-expired").classList.contains("hide"));
+  check("it says how long they are kept", /30 days/.test(h.$get("#files-expired").textContent),
+    `text='${h.$get("#files-expired").textContent}'`);
+  check("nothing is preselected", h.$get("#btn-check").disabled === true);
+}
+
 /* ---------------- Z: the Back button uses the same path ---------------- */
 async function scenarioZ() {
   console.log("Z) Back on the confirm step returns to folders");
@@ -1695,6 +1761,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
                  scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL,
-                 scenarioDT, scenarioDU, scenarioDUU]) { await s(); console.log(""); }
+                 scenarioDT, scenarioDU, scenarioDUU, scenarioDV, scenarioDW]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
