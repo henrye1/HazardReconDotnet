@@ -387,3 +387,43 @@ mapped file can have source columns that happen to collide with header text.
 - The header override round-trips: confirming "first row is not a header" on a
   file with no natural header, reopening the run, and re-discovering resolves
   to the same saved mapping without the user re-toggling anything.
+
+### Verification (2026-08-07)
+
+All fourteen commits above were built TDD (failing test, then code) and landed
+one green step at a time. Final state, both suites, full run:
+
+```
+$ dotnet test tests/HazardRecon.Tests
+Passed!  - Failed:     0, Passed:   314, Skipped:     0, Total:   314, Duration: 1 s
+
+$ node tests/client/app.harness.mjs
+ALL SCENARIOS PASSED
+```
+
+`HazardRecon.Core` and `HazardRecon.Cli` are untouched (`git diff --stat` against
+both is empty for the whole range). No test outside `Web/` needed editing.
+
+The three end-to-end cases the task called out, each with a regression test:
+
+1. **Reopen a failed run, settings and files restored, re-runnable.**
+   `RunInputsEndpointTests.TestWorksTheSameRegardlessOfStatus` (ready/error/
+   interrupted/done all list inputs identically) and
+   `UploadEndpointTests.TestReusingADraftOrFailedRunsFilesWorksTheSameAsADoneOne`
+   (discovery succeeds against a non-done source run) on the server;
+   `scenarioDY` (a draft/error/interrupted history row reopens the wizard,
+   a running one does not) and `scenarioDV`/`DW` (Run again restores the
+   files and "Run reconciliation" still works) on the client.
+2. **Replace one file, the rest reused server-side, nothing re-uploaded.**
+   `UploadEndpointTests.TestReusesTheStoredFilesTheUploadDoesNotReplace` on the
+   server; `scenarioDT` on the client (only the replaced field is posted; only
+   the untouched role appears in `reuse`).
+3. **A purged run's inputs are gone; the UI demands re-upload.**
+   `RunInputsEndpointTests.TestAPurgedRunSaysSoAndListsNoFiles` and
+   `UploadEndpointTests.TestReusingAPurgedRunNamesWhatMustBePickedAgain` on the
+   server; `scenarioDW` on the client (the expiry line shows, slots are empty).
+
+Plus the header-reading gap identified in Decision C:
+`UploadEndpointTests.TestReopeningARunReappliesItsConfirmedHeaderReading`
+confirms a recorded "not a header" choice is reapplied on reopen rather than
+falling back to the sniffer's own guess.
