@@ -1724,6 +1724,40 @@ async function scenarioDW() {
   check("nothing is preselected", h.$get("#btn-check").disabled === true);
 }
 
+/* ---------------- DX: editing a file closes the steps behind it ---------------- */
+async function scenarioDX() {
+  console.log("DX) an unchanged re-run can go straight on; a changed file forces a re-check");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (/\/inputs$/.test(url)) return Promise.resolve(jsonRes(200, {
+      inputs_purged: false,
+      sets: [{ index: 0, label: "JUNE", files: [
+        { role: "exposure", name: "e.csv", size_bytes: 10 },
+        { role: "debug", name: "d.zip", size_bytes: 10 },
+      ] }],
+    }));
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  // a completed run: every step has been reached
+  h.ctx.showInventory(INVENTORY_FIX);
+  h.ctx.showResults(DETAIL_RESULT, []);
+  h.$get("#btn-rerun")._fire("click");
+  for (let i = 0; i < 6; i++) await tick();
+
+  check("the confirm step is still reachable", h.$get("#rail-2").disabled === false,
+    "an unchanged re-run should not have to upload again");
+
+  // replacing a file invalidates everything discovery worked out
+  pickInto(h, 0, "exposure", [mkFile("new-e.csv", 10)]);
+
+  check("the mapping step closes", h.$get("#rail-1").disabled === true);
+  check("the confirm step closes", h.$get("#rail-2").disabled === true);
+  check("the run step closes", h.$get("#rail-3").disabled === true);
+  check("the files step is still where we are", !h.$get("#step-files").classList.contains("hide"));
+}
+
 /* ---------------- Z: the Back button uses the same path ---------------- */
 async function scenarioZ() {
   console.log("Z) Back on the confirm step returns to folders");
@@ -1761,6 +1795,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
                  scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL,
-                 scenarioDT, scenarioDU, scenarioDUU, scenarioDV, scenarioDW]) { await s(); console.log(""); }
+                 scenarioDT, scenarioDU, scenarioDUU, scenarioDV, scenarioDW, scenarioDX]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

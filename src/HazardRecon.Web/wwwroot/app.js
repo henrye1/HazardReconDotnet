@@ -224,6 +224,16 @@ function setStep(n) {
   }
 }
 
+/* Everything after the files - the mapping, the inventory, the run - describes
+   the files as they were uploaded. Changing one makes all of it stale, so the
+   rail closes behind this step and "Check columns" has to run again. Without
+   this, replacing a file and stepping forward would run the previous upload
+   while the screen showed the new file. */
+function filesChanged() {
+  STEP_REACHED = STEP_AT;
+  setStep(STEP_AT);
+}
+
 function goStep(n) {
   if (n === STEP_AT || n > STEP_REACHED) return;
   // the results step is the run detail rather than a wizard body
@@ -618,6 +628,7 @@ function renderSets() {
     drop.addEventListener("click", () => {
       if (SETS.length > 1) SETS.splice(idx, 1);
       else SETS[idx] = emptySet();
+      filesChanged();
       renderSets();
     });
     head.appendChild(drop);
@@ -642,6 +653,7 @@ function renderSets() {
       input.addEventListener("change", () => {
         if (input.files && input.files.length) {
           set.files[kind.key] = Array.from(input.files);
+          filesChanged();
           renderSets();
         }
       });
@@ -657,7 +669,7 @@ function renderSets() {
       if (on) {
         const clear = el("button", "x", '<span class="ms-icon" style="font-size:20px">close</span>');
         clear.title = "Remove this file";
-        clear.addEventListener("click", () => { set.files[kind.key] = []; renderSets(); });
+        clear.addEventListener("click", () => { set.files[kind.key] = []; filesChanged(); renderSets(); });
         row.appendChild(clear);
       }
 
@@ -690,6 +702,7 @@ renderSets();
 $("#btn-add-set").addEventListener("click", () => {
   if (SETS.length >= MAX_SETS) return;
   SETS.push(emptySet());
+  filesChanged();
   renderSets();
 });
 // no restore of a previous choice: a file input cannot be repopulated from
