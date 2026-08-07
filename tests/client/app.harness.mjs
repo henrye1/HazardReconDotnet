@@ -594,9 +594,13 @@ async function scenarioR() {
   check("stat tiles rendered", /Runs this month/.test(h.$get("#stat-tiles").innerHTML));
   check("history shows both runs", /JUN 2026/.test(h.$get("#history-table").innerHTML) &&
     /MAY 2026/.test(h.$get("#history-table").innerHTML));
-  check("a failed run gets no Open button",
-    (h.$get("#history-table").innerHTML.match(/data-run/g) || []).length === 1,
+  // a failed run has no detail to open, but it can still be reopened into the
+  // wizard - so it gets a row too, just not the "Open" icon a done run gets
+  check("both rows are reopenable",
+    (h.$get("#history-table").innerHTML.match(/data-run/g) || []).length === 2,
     h.$get("#history-table").innerHTML.slice(0, 200));
+  check("the done run offers Open", /title="Open this run"/.test(h.$get("#history-table").innerHTML));
+  check("the failed run offers Reopen instead", /title="Reopen this run"/.test(h.$get("#history-table").innerHTML));
 
   // New run swaps screens and resets to step 1
   h.$get("#btn-new-run")._fire("click");
@@ -1758,6 +1762,52 @@ async function scenarioDX() {
   check("the files step is still where we are", !h.$get("#step-files").classList.contains("hide"));
 }
 
+/* ---------------- DY: a draft or failed run reopens from its history row ---------------- */
+async function scenarioDY() {
+  console.log("DY) clicking a draft/failed history row reopens the wizard; a running one is inert");
+  const runs = [
+    { id: "r-draft", status: "ready", set_labels: ["JUN 2026"], created_at: "2026-07-01T09:00:00Z" },
+    { id: "r-error", status: "error", set_labels: ["MAY 2026"], created_at: "2026-06-01T09:00:00Z" },
+    { id: "r-interrupted", status: "interrupted", set_labels: ["APR 2026"], created_at: "2026-05-01T09:00:00Z" },
+    { id: "r-running", status: "running", set_labels: ["MAR 2026"], created_at: "2026-04-01T09:00:00Z" },
+  ];
+  const inputsRequested = [];
+  const h = bootAuth({ access_token: "tok-abc" }, (url) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/runs") return Promise.resolve(jsonRes(200, runs));
+    if (/\/inputs$/.test(url)) {
+      inputsRequested.push(url);
+      return Promise.resolve(jsonRes(200, { inputs_purged: false, sets: [] }));
+    }
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  const html = h.$get("#history-table").innerHTML;
+  check("the running row is not reopenable", !new RegExp(`data-run="r-running"`).test(html), html);
+
+  const rows = h.$get("#history-table").querySelectorAll("tr.clickable");
+  const draftRow = rows.find(r => r.getAttribute("data-run") === "r-draft");
+  const errorRow = rows.find(r => r.getAttribute("data-run") === "r-error");
+  const interruptedRow = rows.find(r => r.getAttribute("data-run") === "r-interrupted");
+
+  check("the draft row is clickable", !!draftRow, JSON.stringify(rows.map(r => r.getAttribute("data-run"))));
+  check("the failed row is clickable", !!errorRow);
+  check("the interrupted row is clickable", !!interruptedRow);
+
+  // querySelectorAll rebuilds stand-ins on every call rather than caching them,
+  // so a row fetched here is not the object renderHistoryRows attached its
+  // listener to - openHistoryRow is called directly, the same way the harness
+  // already drives other internal handlers (adoptStoredInputs, beginRun, ...)
+  h.ctx.openHistoryRow("r-draft", "ready");
+  for (let i = 0; i < 6; i++) await tick();
+
+  check("the wizard opens", !h.$get("#screen-wizard").classList.contains("hide"));
+  check("it lands on the files step", !h.$get("#step-files").classList.contains("hide"));
+  check("the draft's own inputs were fetched", inputsRequested.some(u => u.includes("r-draft")),
+    JSON.stringify(inputsRequested));
+}
+
 /* ---------------- Z: the Back button uses the same path ---------------- */
 async function scenarioZ() {
   console.log("Z) Back on the confirm step returns to folders");
@@ -1795,6 +1845,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
                  scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL,
-                 scenarioDT, scenarioDU, scenarioDUU, scenarioDV, scenarioDW, scenarioDX]) { await s(); console.log(""); }
+                 scenarioDT, scenarioDU, scenarioDUU, scenarioDV, scenarioDW, scenarioDX, scenarioDY]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

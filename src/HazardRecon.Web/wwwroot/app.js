@@ -362,16 +362,22 @@ function renderHistoryRows() {
     "<th></th></tr></thead><tbody>" +
     runs.map(r => {
       const done = r.status === "done";
+      // a draft (ready) or a failed run (error/interrupted) has no detail to show,
+      // but its inputs are sitting in storage exactly like a done run's, so the
+      // row reopens straight into the wizard instead. A live run is excluded: its
+      // input directory may still be in use by the in-flight job.
+      const reopenable = done || r.status === "ready" || r.status === "error" || r.status === "interrupted";
       const when = new Date(r.created_at).toLocaleString();
       const labels = (r.set_labels || []).join(", ") || "&mdash;";
       const traced = r.trace_rate > 0 ? r.trace_rate.toFixed(1) + "%" : "&mdash;";
       const untraced = done ? fmt(r.untraced || 0) : "&mdash;";
       const exceptions = done ? fmt(r.exceptions || 0) : "&mdash;";
       const label = STATUS_LABEL[r.status] || r.status;
-      // only a completed run has anything to open
       const go = done
         ? `<span class="ms-icon rowgo" title="Open this run">arrow_forward</span>`
-        : "";
+        : reopenable
+          ? `<span class="ms-icon rowgo" title="Reopen this run">refresh</span>`
+          : "";
       // a live run is still writing its own folder, so the server refuses to
       // delete it - no point offering the button
       const del = r.status === "running"
@@ -379,7 +385,7 @@ function renderHistoryRows() {
         : `<button class="rowdel" data-del="${r.id}" title="Delete run">` +
           `<span class="ms-icon" style="font-size:20px">delete</span></button>`;
 
-      return `<tr${done ? ` class="clickable" data-run="${r.id}"` : ""}>` +
+      return `<tr${reopenable ? ` class="clickable" data-run="${r.id}" data-status="${r.status}"` : ""}>` +
              `<td><div class="runid"><b>${runRef(r.id)}</b><span>${labels}</span></div></td>` +
              `<td style="white-space:nowrap">${when}</td>` +
              `<td>${fmt(r.sets || 0)}</td>` +
@@ -392,7 +398,8 @@ function renderHistoryRows() {
     }).join("") + "</tbody>";
 
   Array.from($("#history-table").querySelectorAll("tr.clickable"))
-    .forEach(tr => tr.addEventListener("click", () => openRun(tr.getAttribute("data-run"))));
+    .forEach(tr => tr.addEventListener("click", () =>
+      openHistoryRow(tr.getAttribute("data-run"), tr.getAttribute("data-status"))));
 
   // stops the row's own click: deleting a run must not also open it
   Array.from($("#history-table").querySelectorAll("button[data-del]")).forEach(btn =>
@@ -400,6 +407,15 @@ function renderHistoryRows() {
       e.stopPropagation();
       askDelete(btn.getAttribute("data-del"));
     }));
+}
+
+/* Routes a history row click by what the run actually has to show: a done run
+   opens its stored detail, while a draft or a failed run has none - only its
+   inputs, sitting exactly where a done run's do - so it reopens into the wizard
+   instead. Rows for any other status are not clickable, so this never sees them. */
+function openHistoryRow(id, status) {
+  if (status === "done") openRun(id);
+  else rerunFromDetail(id);
 }
 
 /* Reopens a stored run: its summaries, downloads and dashboard come back from
