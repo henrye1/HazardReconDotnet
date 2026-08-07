@@ -157,6 +157,8 @@ body{
 /* a step that stacks its own cards, and the two-up folders step */
 .stepgrid{display:grid;gap:20px}
 .cols2{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:20px;align-items:start}
+/* one mapper card per uploaded file */
+#map-files{display:grid;gap:20px}
 
 /* ---------- cards ---------- */
 .card{
