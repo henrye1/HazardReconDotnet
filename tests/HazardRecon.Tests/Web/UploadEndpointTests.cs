@@ -43,6 +43,8 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     {
         public FakeRunStore RunStore { get; } = new();
         public FakeColumnMappingStore MappingStore { get; } = new();
+        public FakeRunFileStore RunFiles { get; } = new();
+        public FakeFileStore Files { get; } = new();
 
         protected override IHost CreateHost(IHostBuilder builder)
         {
@@ -70,8 +72,8 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
                 services.RemoveAll<IFileStore>();
                 services.RemoveAll<IColumnMappingStore>();
                 services.AddSingleton<IRunStore>(RunStore);
-                services.AddSingleton<IRunFileStore>(new FakeRunFileStore());
-                services.AddSingleton<IFileStore>(new FakeFileStore());
+                services.AddSingleton<IRunFileStore>(RunFiles);
+                services.AddSingleton<IFileStore>(Files);
                 services.AddSingleton<IColumnMappingStore>(MappingStore);
             });
 
@@ -558,5 +560,142 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         // engine.Run(..., columnMaps: capturedJob.ColumnMaps) is wired correctly
         Assert.Equal("error", job.GetProperty("status").GetString());
         Assert.Contains("No analysis sets found", job.GetProperty("error").GetString());
+    }
+
+    private static readonly Guid TestUser = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    private static byte[] DebugZip()
+    {
+        using MemoryStream buffer = new();
+        using (System.IO.Compression.ZipArchive zip =
+               new(buffer, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            System.IO.Compression.ZipArchiveEntry entry = zip.CreateEntry("lgd_defaults.csv");
+            using StreamWriter writer = new(entry.Open());
+            writer.Write("AccountNumber,EventType,CohortDate,Bucket,Rating,Amount\n"
+                       + "A1,Lifetime,2026-01-31,0,5,100\n");
+        }
+        return buffer.ToArray();
+    }
+
+    private Guid SeedRunWithStoredInputs(Guid? userId = null, DateTimeOffset? inputsPurgedAt = null)
+    {
+        Guid owner = userId ?? TestUser;
+        Guid run = Guid.NewGuid();
+
+        _factory.RunStore.Runs.Add(new RunRecord
+        {
+            Id = run, UserId = owner,
+            SetLabels = new List<string> { "JUNE 2026" },
+            InputsPurgedAt = inputsPurgedAt
+        });
+
+        void Add(string relativePath, string role, string originalName, byte[] bytes)
+        {
+            string storagePath = $"{owner}/{run}/input/{relativePath}";
+            _factory.RunFiles.Files.Add(new RunFileRecord
+            {
+                Id = Guid.NewGuid(), RunId = run, UserId = owner, Kind = "input",
+                RelativePath = relativePath, StoragePath = storagePath,
+                SizeBytes = bytes.Length, Role = role, OriginalName = originalName
+            });
+            _factory.Files.Objects[storagePath] = bytes;
+        }
+
+        Add("0/IFRS9.csv", "exposure", "IFRS9 FILE JUNE 2025.csv",
+            Encoding.UTF8.GetBytes("LoanAccountNumber,AmountOutstanding\nA1,100\n"));
+        Add("0/writeoff.csv", "writeoff", "2026_WRITEOFF.csv",
+            Encoding.UTF8.GetBytes("LoanAccountNumber,CustomerId,Amount,ReportDate\nA1,C1,50,2026-01-31\n"));
+        Add("0/debug.zip", "debug", "debug.zip", DebugZip());
+
+        return run;
+    }
+
+    [Fact]
+    public async Task TestReusesTheStoredFilesTheUploadDoesNotReplace()
+    {
+        HttpClient client = _factory.CreateClient();
+        Guid previous = SeedRunWithStoredInputs();
+
+        using MultipartFormDataContent form = new();
+        AddFile(form, 0, "writeoff", "NEW_WRITEOFF.csv", "LoanAccountNumber,CustomerId,Amount,ReportDate\nA1,C1,60,2026-02-28\n");
+        form.Add(new StringContent(previous.ToString()), "based_on_run");
+        form.Add(new StringContent("""[{"set":0,"roles":["exposure","debug"]}]"""), "reuse");
+
+        HttpResponseMessage res = await client.PostAsync("/api/discover", form);
+        string body = await res.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        using JsonDocument doc = JsonDocument.Parse(body);
+
+        // one set discovered, from one uploaded file plus two reused ones
+        JsonElement set = Assert.Single(doc.RootElement.GetProperty("inventory").GetProperty("sets").EnumerateArray());
+        Assert.Equal("writeoff.csv", set.GetProperty("writeoff").GetString());
+        Assert.Equal("IFRS9.csv", set.GetProperty("ifrs9").GetString());
+    }
+
+    [Fact]
+    public async Task TestReusingEverythingNeedsNoUploadedFileAtAll()
+    {
+        HttpClient client = _factory.CreateClient();
+        Guid previous = SeedRunWithStoredInputs();
+
+        using MultipartFormDataContent form = new();
+        form.Add(new StringContent(previous.ToString()), "based_on_run");
+        form.Add(new StringContent("""[{"set":0,"roles":["exposure","writeoff","debug"]}]"""), "reuse");
+
+        HttpResponseMessage res = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task TestReusingAPurgedRunNamesWhatMustBePickedAgain()
+    {
+        HttpClient client = _factory.CreateClient();
+        Guid previous = SeedRunWithStoredInputs(inputsPurgedAt: DateTimeOffset.UtcNow);
+
+        using MultipartFormDataContent form = new();
+        form.Add(new StringContent(previous.ToString()), "based_on_run");
+        form.Add(new StringContent("""[{"set":0,"roles":["exposure"]}]"""), "reuse");
+
+        HttpResponseMessage res = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        Assert.Contains("expired", await res.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestReusingAnotherUsersRunIsNotFound()
+    {
+        HttpClient client = _factory.CreateClient();
+        Guid previous = SeedRunWithStoredInputs(userId: Guid.NewGuid());
+
+        using MultipartFormDataContent form = new();
+        form.Add(new StringContent(previous.ToString()), "based_on_run");
+        form.Add(new StringContent("""[{"set":0,"roles":["exposure"]}]"""), "reuse");
+
+        HttpResponseMessage res = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(RunStatus.Ready)]
+    [InlineData(RunStatus.Error)]
+    [InlineData(RunStatus.Interrupted)]
+    public async Task TestReusingADraftOrFailedRunsFilesWorksTheSameAsADoneOne(string status)
+    {
+        HttpClient client = _factory.CreateClient();
+        Guid previous = SeedRunWithStoredInputs();
+        _factory.RunStore.Runs.Single(r => r.Id == previous).StatusId = RunStatus.IdOf(status);
+
+        using MultipartFormDataContent form = new();
+        form.Add(new StringContent(previous.ToString()), "based_on_run");
+        form.Add(new StringContent("""[{"set":0,"roles":["exposure","writeoff","debug"]}]"""), "reuse");
+
+        HttpResponseMessage res = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
     }
 }

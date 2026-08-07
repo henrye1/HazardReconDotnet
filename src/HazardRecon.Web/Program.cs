@@ -211,7 +211,9 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
             statusCode: 429);
     }
 
-    if (items.Count == 0)
+    // an upload with nothing new can still be legitimate: every file is being
+    // reused from a previous run, named below in "reuse"
+    if (items.Count == 0 && string.IsNullOrEmpty(form["based_on_run"].FirstOrDefault()))
         return Results.BadRequest(new { error = "Please choose at least one set's files." });
 
     RunRecord created = await runStore.CreateAsync(
@@ -228,7 +230,75 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     Directory.CreateDirectory(outdir);
     Directory.CreateDirectory(indir);
 
+    // Re-running an earlier run: the roles the client did not re-upload are
+    // rebuilt from that run's stored objects and handed to the receiver as if
+    // they had been uploaded, so nothing below needs to know the difference.
+    List<IDisposable> reusedHandles = new();
+    string? basedOn = form["based_on_run"].FirstOrDefault();
+
+    if (!string.IsNullOrEmpty(basedOn))
+    {
+        if (!Guid.TryParse(basedOn, out Guid previousRun))
+            return Results.NotFound(new { error = "Unknown run." });
+
+        RunRecord? previous = await runStore.GetAsync(previousRun, userId.Value, ctx.RequestAborted);
+        if (previous == null) return Results.NotFound(new { error = "Unknown run." });
+
+        if (previous.InputsPurgedAt != null)
+            return Results.BadRequest(new
+            {
+                error = "The files from that run have expired, so they cannot be reused - please choose them again."
+            });
+
+        List<ReuseRequest> requests = new();
+        string? reuseJson = form["reuse"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(reuseJson))
+        {
+            try
+            {
+                using JsonDocument reuseDoc = JsonDocument.Parse(reuseJson);
+                foreach (JsonElement entry in reuseDoc.RootElement.EnumerateArray())
+                {
+                    requests.Add(new ReuseRequest(
+                        entry.GetProperty("set").GetInt32(),
+                        entry.GetProperty("roles").EnumerateArray().Select(r => r.GetString() ?? "").ToList()));
+                }
+            }
+            catch (Exception)
+            {
+                return Results.BadRequest(new { error = "Could not read which files to reuse." });
+            }
+        }
+
+        if (requests.Count > 0)
+        {
+            IReadOnlyList<RunFileRecord> previousFiles =
+                await runFileStore.ListAsync(previousRun, userId.Value, ctx.RequestAborted);
+
+            // outside indir, so it is never persisted as part of this run
+            string reuseTemp = Path.Combine(runsDir, rid, "_reuse");
+
+            ReuseOutcome reuse = await InputReuse.MaterialiseAsync(
+                requests, previousFiles, fileStore, reuseTemp, ctx.RequestAborted);
+
+            if (!reuse.Ok)
+            {
+                Directory.Delete(Path.Combine(runsDir, rid), recursive: true);
+                await runStore.UpdateStatusAsync(created.Id, "error", reuse.Error);
+                return Results.BadRequest(new { error = reuse.Error });
+            }
+
+            items.AddRange(reuse.Items);
+            reusedHandles.AddRange(reuse.Open);
+        }
+    }
+
     SetReceiveOutcome received = await new SetFileReceiver(maxBytesPerSet).ReceiveAsync(indir, items, ctx.RequestAborted);
+
+    foreach (IDisposable handle in reusedHandles) handle.Dispose();
+    string reuseDir = Path.Combine(runsDir, rid, "_reuse");
+    if (Directory.Exists(reuseDir)) Directory.Delete(reuseDir, recursive: true);
+
     if (!received.Ok)
     {
         Directory.Delete(runRoot, recursive: true);
