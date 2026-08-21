@@ -82,7 +82,7 @@
         <div class="actions" style="margin-top:0">
           <div class="search">
             <span class="ms-icon">search</span>
-            <input type="text" id="run-search" placeholder="Search runs, sets&hellip;" spellcheck="false">
+            <input type="text" id="run-search" placeholder="Search names, runs, sets&hellip;" spellcheck="false">
           </div>
           <button class="btn primary" id="btn-new-run">
             <span class="ms-icon" style="font-size:20px">add</span>New run
@@ -122,7 +122,7 @@
       <div class="pagehead mid">
         <div class="grow">
           <p class="eyebrow">New reconciliation</p>
-          <h1 id="step-title">Choose your analysis folders</h1>
+          <h1 id="step-title">Name this run</h1>
         </div>
         <button class="btn ghost" id="btn-cancel">Cancel</button>
       </div>
@@ -132,34 +132,41 @@
           <div class="st on" id="st-0">
             <button type="button" class="stbtn" id="rail-0">
               <span class="n">1</span>
-              <span class="tx"><b>Files</b><span>Up to four sets</span></span>
+              <span class="tx"><b>Details</b><span>Name and type</span></span>
             </button>
             <div class="line"></div>
           </div>
           <div class="st" id="st-1">
             <button type="button" class="stbtn" id="rail-1">
               <span class="n">2</span>
-              <span class="tx"><b>Map columns</b><span>Engine fields</span></span>
+              <span class="tx"><b>Files</b><span>Up to four sets</span></span>
             </button>
             <div class="line"></div>
           </div>
           <div class="st" id="st-2">
             <button type="button" class="stbtn" id="rail-2">
               <span class="n">3</span>
-              <span class="tx"><b>Confirm</b><span>What was found</span></span>
+              <span class="tx"><b>Map columns</b><span>Engine fields</span></span>
             </button>
             <div class="line"></div>
           </div>
           <div class="st" id="st-3">
             <button type="button" class="stbtn" id="rail-3">
               <span class="n">4</span>
-              <span class="tx"><b>Run</b><span>Checks and engine</span></span>
+              <span class="tx"><b>Confirm</b><span>What was found</span></span>
             </button>
             <div class="line"></div>
           </div>
           <div class="st" id="st-4">
             <button type="button" class="stbtn" id="rail-4">
               <span class="n">5</span>
+              <span class="tx"><b>Run</b><span>Checks and engine</span></span>
+            </button>
+            <div class="line"></div>
+          </div>
+          <div class="st" id="st-5">
+            <button type="button" class="stbtn" id="rail-5">
+              <span class="n">6</span>
               <span class="tx"><b>Results</b><span>Review and ask</span></span>
             </button>
             <div class="line"></div>
@@ -169,8 +176,40 @@
 
       <div class="wrap narrow">
 
-        <!-- step 1 : input files, picked one at a time per set -->
-        <div class="cols2" id="step-files">
+        <!-- step 1 : what this run is called, and which book it covers -->
+        <div class="stepgrid" id="step-details">
+          <div class="card">
+            <div class="cardhead"><span>Run details</span></div>
+            <div class="cardbody">
+              <label class="lbl" for="run-name">Run name</label>
+              <input type="text" id="run-name" maxlength="120" autocomplete="off"
+                     placeholder="e.g. June 2026 retail book">
+              <p class="hint" style="margin:6px 0 0">Used to find this run again in your history.</p>
+
+              <div class="modelrow" style="margin-top:18px">
+                <!-- a button group, so there is no single control to label "for" -->
+                <label>Portfolio type</label>
+                <div class="seg" id="run-type">
+                  <button type="button" class="on" id="rt-lending">Lending</button>
+                  <button type="button" id="rt-trade">Trade receivables</button>
+                </div>
+              </div>
+              <p class="hint" style="margin:6px 0 0">Recorded with the run. The checks, the engine and
+                the workbook are identical for both.</p>
+
+              <div class="actions right">
+                <span class="hint" style="margin:0" id="details-gate"></span>
+                <button class="btn primary big" id="btn-details-next" disabled>
+                  <span>Continue</span>
+                  <span class="ms-icon" style="font-size:20px">arrow_forward</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 2 : input files, picked one at a time per set -->
+        <div class="cols2 hide" id="step-files">
           <div class="card">
             <div class="cardhead"><span>Input files</span></div>
             <div class="cardbody">
@@ -232,7 +271,7 @@
           </div>
         </div>
 
-        <!-- step 2 : map each file's columns onto the engine's fields -->
+        <!-- step 3 : map each file's columns onto the engine's fields -->
         <div class="stepgrid hide" id="step-mapping">
           <div class="card">
             <div class="cardbody maphead">
@@ -263,7 +302,7 @@
           </div>
         </div>
 
-        <!-- step 3 : confirm -->
+        <!-- step 4 : confirm -->
         <div class="stepgrid hide" id="step-confirm">
           <div class="card" id="card-inv">
             <div class="cardhead">
@@ -301,7 +340,7 @@
           <p class="hint" style="margin:0">Two checks per set, plus migrations and engine results.</p>
         </div>
 
-        <!-- step 4 : progress -->
+        <!-- step 5 : progress -->
         <div class="stepgrid hide" id="step-run">
           <div class="card">
             <div class="runhead">

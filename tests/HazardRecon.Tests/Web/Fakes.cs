@@ -76,13 +76,16 @@ public class FakeRunStore : IRunStore
     public List<RunCommentaryLineRecord> SavedCommentaryLines { get; } = new();
     public RunResultsRecord? SavedRunResults { get; private set; }
 
-    public Task<RunRecord> CreateAsync(Guid userId, IReadOnlyList<string> setLabels, CancellationToken ct = default)
+    public Task<RunRecord> CreateAsync(Guid userId, string? name, string runType,
+        IReadOnlyList<string> setLabels, CancellationToken ct = default)
     {
         RunRecord run = new()
         {
             Id = Guid.NewGuid(),
             UserId = userId,
             StatusId = RunStatus.IdOf(RunStatus.Ready),
+            Name = name,
+            RunTypeId = RunTypeLookup.IdOf(runType),
             SetLabels = setLabels.ToList(),
             CreatedAt = DateTimeOffset.UtcNow
         };

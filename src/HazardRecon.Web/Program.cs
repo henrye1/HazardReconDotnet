@@ -159,6 +159,13 @@ catch (Exception ex)
 /// <summary>20 runs per rolling 24 hours, per the spec's abuse guard.</summary>
 const int RunsPerDay = 20;
 
+/// <summary>
+/// Long enough for "June 2026 retail book, revised write-off export" and short
+/// enough that a run list stays readable. The name input carries the same
+/// maxlength, so a longer one only ever reaches here from a non-browser client.
+/// </summary>
+const int MaxRunNameChars = 120;
+
 // POST /api/discover - receives one exposure (IFRS9), one write-off, one
 // debug (zip or its 1-3 loose extracted files), and one scenario file per
 // set, each tagged by the client as set{N}.{kind}. Rehydrates each under the
@@ -214,8 +221,35 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     if (items.Count == 0)
         return Results.BadRequest(new { error = "Please choose at least one set's files." });
 
+    // The details step's two answers, as form values rather than files - the loop
+    // above only walks form.Files, so these cannot be mistaken for a mis-named
+    // set{N}.{kind} upload. Read last, immediately before the row is created: the
+    // guards above own the response for an empty body, an unexpected field and
+    // the daily quota, and checking a name first would take those over.
+    //
+    // FirstOrDefault rather than ToString: StringValues comma-joins a field sent
+    // twice, which would read as one plausible name rather than a bad request.
+    string runName = (form["name"].FirstOrDefault() ?? "").Trim();
+    if (runName.Length == 0)
+        return Results.BadRequest(new { error = "Please give this run a name." });
+
+    // refused rather than truncated - a silently shortened name is a surprise the
+    // user only finds later, in the history list
+    if (runName.Length > MaxRunNameChars)
+        return Results.BadRequest(new { error = $"The run name must be {MaxRunNameChars} characters or fewer." });
+
+    // Saying nothing means the default, as the column itself says. Saying
+    // something unrecognised is a client bug, and filing it as lending anyway
+    // would quietly mislabel the run rather than surface that.
+    string runType = (form["run_type"].FirstOrDefault() ?? "").Trim();
+    if (runType.Length == 0) runType = RunTypeLookup.Default;
+    if (!RunTypeLookup.IsKnown(runType))
+        return Results.BadRequest(new { error = $"Unknown run type '{runType}'." });
+
     RunRecord created = await runStore.CreateAsync(
         userId.Value,
+        runName,
+        runType,
         items.Where(i => i.Kind == SetFileKind.Exposure)
             .OrderBy(i => i.SetIndex)
             .Select(i => Path.GetFileNameWithoutExtension(i.OriginalFileName))
@@ -862,6 +896,11 @@ app.MapGet("/api/runs", async (HttpContext ctx) =>
         {
             id = r.Id,
             status = r.Status,
+            // null for every run created before the wizard asked for a name
+            name = r.Name,
+            // the code, not the id and not a display string - the client holds the
+            // labels, exactly as it does for status
+            run_type = r.RunType,
             model_id = r.ModelId,
             set_labels = r.SetLabels,
             created_at = r.CreatedAt,
@@ -904,6 +943,8 @@ app.MapGet("/api/runs/{rid}", async (string rid, HttpContext ctx) =>
     {
         id = run.Id,
         status = run.Status,
+        name = run.Name,
+        run_type = run.RunType,
         model_id = run.ModelId,
         set_labels = run.SetLabels,
         created_at = run.CreatedAt,

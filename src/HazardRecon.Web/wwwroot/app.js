@@ -148,9 +148,9 @@ function showScreen(name) {
   if (name === "runs") loadHistory();
 }
 
-/* Puts the wizard back at step 1 with nothing carried over. Reopening a stored
-   run leaves the later cards showing, so starting a new one has to clear them
-   or the previous run's results sit under a fresh folder picker. */
+/* Puts the wizard back at the details step with nothing carried over. Reopening
+   a stored run leaves the later cards showing, so starting a new one has to clear
+   them or the previous run's results sit under a fresh folder picker. */
 function resetWizard() {
   RUN_ID = null;
   stopPolling();
@@ -163,7 +163,13 @@ function resetWizard() {
   $("#map-files").innerHTML = "";
   SETS = [emptySet()];
   renderSets();
-  ["#step-files", "#step-mapping"].forEach(sel => {
+  // the name is cleared before the gate is re-run, or Continue stays enabled on
+  // the strength of the name the previous run was given
+  RUN_NAME = "";
+  $("#run-name").value = "";
+  setRunType("lending");
+  updateDetails();
+  ["#step-details", "#step-files", "#step-mapping"].forEach(sel => {
     const stale = $(sel).querySelector(".err"); if (stale) stale.remove();
   });
   // a fresh run has been nowhere, so nothing is reachable from the rail yet
@@ -181,6 +187,7 @@ function showIdentity(session) {
 }
 
 const STEP_TITLES = [
+  "Name this run",
   "Choose your input files",
   "Map columns to engine fields",
   "Confirm what was found",
@@ -190,7 +197,7 @@ const STEP_TITLES = [
 
 /* One body per step. The last step is the run detail, which is a screen of its
    own, so it has no entry here. */
-const STEP_BODIES = ["#step-files", "#step-mapping", "#step-confirm", "#step-run"];
+const STEP_BODIES = ["#step-details", "#step-files", "#step-mapping", "#step-confirm", "#step-run"];
 
 /* The results step, which lives on its own screen rather than in a wizard body. */
 const STEP_RESULTS = STEP_TITLES.length - 1;
@@ -335,8 +342,9 @@ function loadHistory() {
 function renderHistoryRows() {
   const q = RUN_FILTER.trim().toLowerCase();
   const runs = q
-    ? RUNS.filter(r => (runRef(r.id) + " " + (r.set_labels || []).join(" ") +
-        " " + (STATUS_LABEL[r.status] || r.status)).toLowerCase().includes(q))
+    ? RUNS.filter(r => (runRef(r.id) + " " + (r.name || "") + " " +
+        (r.set_labels || []).join(" ") + " " +
+        (STATUS_LABEL[r.status] || r.status)).toLowerCase().includes(q))
     : RUNS;
 
   $("#history-empty").classList.toggle("hide", runs.length > 0);
@@ -346,7 +354,7 @@ function renderHistoryRows() {
   if (runs.length === 0) return;
 
   $("#history-table").innerHTML =
-    "<thead><tr><th>Run</th><th>Started</th><th>Sets</th><th>Status</th>" +
+    "<thead><tr><th>Run</th><th>Type</th><th>Started</th><th>Sets</th><th>Status</th>" +
     "<th class='num'>Traced</th><th class='num'>Untraced</th>" +
     "<th class='num'>Exceptions</th><th class='num'>Duration</th>" +
     "<th></th></tr></thead><tbody>" +
@@ -369,8 +377,18 @@ function renderHistoryRows() {
         : `<button class="rowdel" data-del="${r.id}" title="Delete run">` +
           `<span class="ms-icon" style="font-size:20px">delete</span></button>`;
 
+      // the only user-typed value that reaches innerHTML in here
+      const title = r.name ? escapeHtml(r.name) : runRef(r.id);
+      // bare .chip is already the neutral style; the status variants are the ones
+      // that colour it
+      const type = `<span class="chip">${RUN_TYPE_LABEL[r.run_type] || "&mdash;"}</span>`;
+
       return `<tr${done ? ` class="clickable" data-run="${r.id}"` : ""}>` +
-             `<td><div class="runid"><b>${runRef(r.id)}</b><span>${labels}</span></div></td>` +
+             // the id stays on the row's tooltip: a name is not unique, and it is
+             // still what the delete confirmation and the logs refer to
+             `<td title="${runRef(r.id)}"><div class="runid"><b>${title}</b>` +
+             `<span>${labels}</span></div></td>` +
+             `<td>${type}</td>` +
              `<td style="white-space:nowrap">${when}</td>` +
              `<td>${fmt(r.sets || 0)}</td>` +
              `<td><span class="chip ${r.status}">${label}</span></td>` +
@@ -400,6 +418,14 @@ function openRun(id) {
     .then(({ ok, j }) => {
       if (!ok || !j || !j.result) return;
       RUN_ID = j.id;
+
+      // Puts the details step back the way this run left it. Not cosmetic: the
+      // "Run again" recovery path re-runs discover() for a run the server has
+      // forgotten, and an empty name field would fail it before it started.
+      RUN_NAME = j.name || "";
+      $("#run-name").value = RUN_NAME;
+      setRunType(j.run_type || "lending");
+      updateDetails();
 
       // a stored run opens straight on its detail; there is nothing to pick or
       // confirm, so the wizard is not involved at all
@@ -489,7 +515,47 @@ document.addEventListener("keydown", e => {
 });
 $("#btn-delete-run").addEventListener("click", () => askDelete(RUN_ID));
 
-/* ---------- step 1: the input files, one slot per role ---------- */
+/* ---------- step 1: run details ---------- */
+
+/* The name as it was last sent, kept because the detail header is drawn from the
+   run's result payload, which does not carry it. Set from the input on the way
+   out, and from the stored run when one is reopened. */
+let RUN_NAME = "";
+let RUN_TYPE = "lending";
+
+/* The server sends the type as its code, as it does a run's status, so the
+   display strings live here - see STATUS_LABEL for the same split. A code this
+   client has not heard of falls back rather than being shown raw. */
+const RUN_TYPE_LABEL = { lending: "Lending", trade_receivables: "Trade receivables" };
+
+/* One function owns the button and the hint, as updateReady does for the files
+   step: there is then no path where the two disagree. */
+function updateDetails() {
+  const named = $("#run-name").value.trim().length > 0;
+  $("#btn-details-next").disabled = !named;
+  $("#details-gate").textContent = named ? "" : "A name is required";
+}
+
+function setRunType(t) {
+  RUN_TYPE = t;
+  $("#rt-lending").classList.toggle("on", t === "lending");
+  $("#rt-trade").classList.toggle("on", t === "trade_receivables");
+}
+
+$("#run-name").addEventListener("input", updateDetails);
+$("#rt-lending").addEventListener("click", () => setRunType("lending"));
+$("#rt-trade").addEventListener("click", () => setRunType("trade_receivables"));
+
+/* setStep, not goStep: goStep refuses anything past STEP_REACHED, which is 0 on a
+   fresh wizard, so it would silently do nothing here. setStep is what raises it. */
+$("#btn-details-next").addEventListener("click", () => {
+  setStep(1);
+  $("#step-files").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+updateDetails();
+
+/* ---------- step 2: the input files, one slot per role ---------- */
 const MAX_SETS = 4;
 
 /* Comes from /api/config, so it cannot drift from the server's own limit and
@@ -670,7 +736,7 @@ $("#btn-add-set").addEventListener("click", () => {
 // no restore of a previous choice: a file input cannot be repopulated from
 // script, so there is nothing to put back. Run history replaces this.
 
-/* ---------- step 2: model ---------- */
+/* ---------- step 4: model ---------- */
 /* The models the gateway offered, kept so the conversation's own picker can be
    filled from the same list the wizard's was, without a second round trip. */
 let MODELS = [];
@@ -729,6 +795,18 @@ function discover() {
   const fd = new FormData();
   let sets = 0;
 
+  // Read from the input rather than from what Continue captured: the rail lets the
+  // user walk back to the details step, change the name, and jump forward again
+  // without pressing Continue, and a snapshot would quietly send the old one.
+  const name = $("#run-name").value.trim();
+  if (!name) return Promise.reject(new Error("Please give this run a name."));
+
+  // the scalars lead, so they can be read without buffering the uploads if this
+  // ever stops going through ReadFormAsync
+  fd.append("name", name);
+  fd.append("run_type", RUN_TYPE);
+  RUN_NAME = name;
+
   // one field per file, named "set<n>.<Kind>" - the server splits that back into
   // the set it belongs to and the role it was picked for, and stores it under the
   // canonical name discovery looks for. Sets are numbered over those that were
@@ -776,7 +854,7 @@ function showError(card, msg) {
   if (!box.parentNode) card.appendChild(box);
 }
 
-/* ---------- step 2: column mapping ---------- */
+/* ---------- step 3: column mapping ---------- */
 
 /* The discovery response, kept because the inventory is only drawn once the
    mapping has been confirmed - a step later than the call that produced it. */
@@ -887,7 +965,7 @@ function showMapping(j) {
   MAP_EDITS = {};
 
   const stale = $("#step-mapping").querySelector(".err"); if (stale) stale.remove();
-  setStep(1);
+  setStep(2);
 
   // Nothing to map means no set survived discovery, which the inventory explains
   // far better than an empty mapping step would. The rail can still walk back
@@ -1107,11 +1185,11 @@ $("#btn-remap").addEventListener("click", () => {
   MAP_FILES.forEach(f => { f.hasHeaders = f.sniffedHasHeaders; });
   renderMapping();
 });
-$("#btn-back-files").addEventListener("click", () => goStep(0));
+$("#btn-back-files").addEventListener("click", () => goStep(1));
 
 function showInventory(j) {
   RUN_ID = j.run_id;
-  setStep(2);
+  setStep(3);
   const card = $("#card-inv");
   const old = card.querySelector(".err"); if (old) old.remove();
 
@@ -1145,7 +1223,7 @@ const cell = (v) => "<td style='white-space:nowrap'>" + (v
   ? "<span class='ms-icon found'>check_circle</span>" + v
   : "<span class='ms-icon missing'>cancel</span>missing") + "</td>";
 
-/* ---------- step 3: run ---------- */
+/* ---------- step 4: run ---------- */
 function stopPolling() {
   if (POLL) { clearInterval(POLL); POLL = null; }
   seen = 0;
@@ -1166,11 +1244,11 @@ function beginRun() {
   if (!RUN_ID) return;
   stopPolling();
   // cleared before the rail is drawn: the previous run's results must not stay
-  // reachable from step 4 while a new run is starting
+  // reachable from the results step while a new run is starting
   RESULT = null;
   // Run again is offered from the run detail, so come back to the wizard first
   showScreen("wizard");
-  setStep(3);
+  setStep(4);
   setChatOpen(false);
   const stale = $("#step-run").querySelector(".err"); if (stale) stale.remove();
 
@@ -1297,7 +1375,7 @@ function startRun(hasRetried) {
           })
           // discovery and the mapping each move the rail to their own step, so
           // the run step has to be put back before the run is watched again
-          .then(() => { setStep(3); return startRun(true); })
+          .then(() => { setStep(4); return startRun(true); })
           .catch(e => failRun(e.message));
       }
       if (!ok || !j) {
@@ -1316,7 +1394,7 @@ $("#btn-rerun").addEventListener("click", beginRun);
 
 /* Back to the folders, keeping whatever was picked - the inventory is discarded
    because the folders may change before the next check. */
-$("#btn-back-map").addEventListener("click", () => goStep(1));
+$("#btn-back-map").addEventListener("click", () => goStep(2));
 
 function setBadge(text, cls) {
   const b = $("#run-badge");
@@ -1398,16 +1476,21 @@ function showResults(res, log) {
 }
 
 function renderDetailHeader(res) {
-  $("#detail-title").textContent = runRef(RUN_ID);
+  // textContent, so the name needs no escaping here
+  $("#detail-title").textContent = RUN_NAME || runRef(RUN_ID);
 
   const labels = (res.sets || []).map(s => s.label || s.key).filter(Boolean);
   const bits = [];
+  // the id keeps its place on the meta line now that the title may be a name
+  bits.push(runRef(RUN_ID));
+  bits.push(RUN_TYPE_LABEL[RUN_TYPE] || RUN_TYPE);
   if (labels.length) bits.push(labels.join(", "));
   bits.push(`${(res.sets || []).length} set${(res.sets || []).length === 1 ? "" : "s"}`);
   if (res.elapsed_seconds != null) bits.push("ran in " + stageTime(res.elapsed_seconds));
   $("#detail-meta").textContent = bits.join(" · ");
 
-  $("#chat-run").textContent = [runRef(RUN_ID)].concat(labels.slice(0, 1)).join(" · ");
+  $("#chat-run").textContent =
+    [RUN_NAME || runRef(RUN_ID)].concat(labels.slice(0, 1)).join(" · ");
 }
 
 /* ---------- summary tab ---------- */

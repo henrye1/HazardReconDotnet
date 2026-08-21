@@ -32,7 +32,7 @@ public class RunDeleterTests : IDisposable
     /// <summary>A run with two indexed objects, a working folder and a row.</summary>
     private async Task<Guid> SeedRunAsync()
     {
-        RunRecord run = await _runs.CreateAsync(User, new[] { "JUN2026" });
+        RunRecord run = await _runs.CreateAsync(User, "June 2026 book", RunTypeLookup.Lending, new[] { "JUN2026" });
 
         string inputPath = $"{User}/{run.Id}/input/0/IFRS9.csv";
         string outputPath = $"{User}/{run.Id}/output/hazard_rate_reconciliation.xlsx";
@@ -111,7 +111,7 @@ public class RunDeleterTests : IDisposable
     public async Task A_run_with_no_working_folder_deletes_cleanly()
     {
         // a run reopened from history on a later process has nothing local left
-        RunRecord run = await _runs.CreateAsync(User, new[] { "JUN2026" });
+        RunRecord run = await _runs.CreateAsync(User, "June 2026 book", RunTypeLookup.Lending, new[] { "JUN2026" });
 
         await Deleter().DeleteAsync(run.Id, User);
 

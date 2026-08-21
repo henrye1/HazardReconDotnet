@@ -79,7 +79,7 @@ public class DeleteRunEndpointTests : IClassFixture<DeleteRunEndpointTests.Authe
 
     private async Task<RunRecord> SeedAsync(Guid? owner = null, string status = RunStatus.Done)
     {
-        RunRecord run = await _factory.RunStore.CreateAsync(owner ?? User, new[] { "JUN2026" });
+        RunRecord run = await _factory.RunStore.CreateAsync(owner ?? User, "June 2026 book", RunTypeLookup.Lending, new[] { "JUN2026" });
         run.StatusId = RunStatus.IdOf(status);
         return run;
     }

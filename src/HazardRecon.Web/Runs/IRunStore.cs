@@ -6,7 +6,13 @@ namespace HazardRecon.Web.Runs;
 /// </summary>
 public interface IRunStore
 {
-    Task<RunRecord> CreateAsync(Guid userId, IReadOnlyList<string> setLabels, CancellationToken ct = default);
+    /// <param name="name">
+    /// What the user called the run. Nullable because the column is; requiring
+    /// one is the endpoint's job, not this store's.
+    /// </param>
+    /// <param name="runType">A code from <see cref="RunTypeLookup"/>, not an id.</param>
+    Task<RunRecord> CreateAsync(Guid userId, string? name, string runType,
+        IReadOnlyList<string> setLabels, CancellationToken ct = default);
 
     Task<RunRecord?> GetAsync(Guid runId, Guid userId, CancellationToken ct = default);
 

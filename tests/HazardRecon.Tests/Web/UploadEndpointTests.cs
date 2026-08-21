@@ -101,6 +101,19 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         form.Add(content, $"set{setIndex}.{kind}", fileName);
     }
 
+    /// <summary>
+    /// What the details step sends: two scalar form values, added without a
+    /// filename so they arrive as values rather than files - with one they would
+    /// reach the set{N}.{kind} loop and be rejected as an unexpected field.
+    /// Every test that expects to get past run creation needs these.
+    /// </summary>
+    private static void AddDetails(
+        MultipartFormDataContent form, string name = "Test run", string runType = RunTypeLookup.Lending)
+    {
+        form.Add(new StringContent(name), "name");
+        form.Add(new StringContent(runType), "run_type");
+    }
+
     private static void AddFullSet(MultipartFormDataContent form, int setIndex, string exposureName = "IFRS9 FILE.csv")
     {
         AddFile(form, setIndex, "exposure", exposureName, "A1,2026-06-30,100,Stage 2\n");
@@ -143,6 +156,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         int before = _factory.RunStore.Runs.Count;
 
         using MultipartFormDataContent form = new();
+        AddDetails(form);
         AddFullSet(form, 0, "MAR 2026.csv");
 
         HttpResponseMessage response = await client.PostAsync("/api/discover", form);
@@ -158,11 +172,137 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     }
 
     [Fact]
+    public async Task TestTheRunNameAndTypeAreStored()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddDetails(form, "  Q2 receivables  ", RunTypeLookup.TradeReceivables);
+        AddFullSet(form, 0, "NAMED 2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        RunRecord run = _factory.RunStore.Runs[^1];
+        // trimmed at the edge, so the stored name is what the list will show
+        Assert.Equal("Q2 receivables", run.Name);
+        Assert.Equal(RunTypeLookup.TradeReceivables, run.RunType);
+    }
+
+    [Fact]
+    public async Task TestARunNameIsRequired()
+    {
+        HttpClient client = _factory.CreateClient();
+        int before = _factory.RunStore.Runs.Count;
+
+        using MultipartFormDataContent form = new();
+        AddFullSet(form, 0, "UNNAMED 2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("name", body);
+        // the point of validating before the row is created: a refused upload
+        // leaves no half-made run behind
+        Assert.Equal(before, _factory.RunStore.Runs.Count);
+    }
+
+    [Fact]
+    public async Task TestABlankRunNameIsRejected()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddDetails(form, "   ");
+        AddFullSet(form, 0, "BLANK 2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TestAnOverlongRunNameIsRejected()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddDetails(form, new string('x', 121));
+        AddFullSet(form, 0, "LONG 2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("120", body);
+    }
+
+    [Fact]
+    public async Task TestAnAbsentRunTypeDefaultsToLending()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        // a name but no type at all, which is what an older client would send
+        form.Add(new StringContent("No type given"), "name");
+        AddFullSet(form, 0, "NOTYPE 2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(RunTypeLookup.Lending, _factory.RunStore.Runs[^1].RunType);
+    }
+
+    [Fact]
+    public async Task TestAnUnknownRunTypeIsRejected()
+    {
+        HttpClient client = _factory.CreateClient();
+        int before = _factory.RunStore.Runs.Count;
+
+        using MultipartFormDataContent form = new();
+        AddDetails(form, "Mystery book", "mortgages");
+        AddFullSet(form, 0, "BADTYPE 2026.csv");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        // refused rather than filed as lending, which would mislabel the run
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("mortgages", body);
+        Assert.Equal(before, _factory.RunStore.Runs.Count);
+    }
+
+    [Fact]
+    public async Task TestTheHistoryCarriesTheNameAndType()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddDetails(form, "History listed run", RunTypeLookup.TradeReceivables);
+        AddFullSet(form, 0, "HIST 2026.csv");
+        await client.PostAsync("/api/discover", form);
+
+        string list = await (await client.GetAsync("/api/runs")).Content.ReadAsStringAsync();
+
+        Assert.Contains("History listed run", list);
+        Assert.Contains("trade_receivables", list);
+
+        Guid runId = _factory.RunStore.Runs[^1].Id;
+        string detail = await (await client.GetAsync($"/api/runs/{runId}")).Content.ReadAsStringAsync();
+
+        Assert.Contains("History listed run", detail);
+        Assert.Contains("trade_receivables", detail);
+    }
+
+    [Fact]
     public async Task TestTheResponseIncludesMappingDataForBothCsvFiles()
     {
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent form = new();
+        AddDetails(form);
         AddDiscoverableSet(form, 0);
 
         HttpResponseMessage response = await client.PostAsync("/api/discover", form);
@@ -181,6 +321,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent form = new();
+        AddDetails(form);
         AddFullSet(form, 0, "JAN 2026.csv");
         AddFullSet(form, 1, "FEB 2026.csv");
 
@@ -198,6 +339,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent form = new();
+        AddDetails(form);
         AddFile(form, 0, "writeoff", "WRITEOFF.csv", "a,b\n1,2\n");
         AddFile(form, 0, "debug", "debug.zip", "zipbytes");
         AddFile(form, 0, "scenario", "scenario.json", "{}");
@@ -228,6 +370,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent form = new();
+        AddDetails(form);
         AddFullSet(form, 0, "APR 2026.csv");
 
         HttpResponseMessage response = await client.PostAsync("/api/discover", form);
@@ -288,7 +431,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     {
         HttpClient client = _factory.CreateClient();
 
-        await _factory.RunStore.CreateAsync(Guid.NewGuid(), new[] { "SOMEONE ELSE" });
+        await _factory.RunStore.CreateAsync(Guid.NewGuid(), "Someone else's run", RunTypeLookup.Lending, new[] { "SOMEONE ELSE" });
 
         HttpResponseMessage response = await client.GetAsync("/api/runs");
         string body = await response.Content.ReadAsStringAsync();
@@ -303,6 +446,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent discoverForm = new();
+        AddDetails(discoverForm);
         AddDiscoverableSet(discoverForm, 0, "JUN2026.csv");
         HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
         string discoverBody = await discoverResponse.Content.ReadAsStringAsync();
@@ -345,6 +489,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent form = new();
+        AddDetails(form);
         AddDiscoverableSetWithoutWriteOff(form, 0, "NOWO2026.csv");
 
         HttpResponseMessage response = await client.PostAsync("/api/discover", form);
@@ -373,6 +518,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         int before = _factory.MappingStore.RunMappings.Count;
 
         using MultipartFormDataContent discoverForm = new();
+        AddDetails(discoverForm);
         AddDiscoverableSetWithoutWriteOff(discoverForm, 0, "NOWOMAP2026.csv");
         HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
         using JsonDocument doc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
@@ -411,6 +557,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent discoverForm = new();
+        AddDetails(discoverForm);
         AddDiscoverableSet(discoverForm, 0, "HDR2026.csv");
         HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
         using JsonDocument doc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
@@ -458,6 +605,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         HttpClient client = _factory.CreateClient();
 
         using MultipartFormDataContent discoverForm = new();
+        AddDetails(discoverForm);
         AddDiscoverableSet(discoverForm, 0, "HDRDEF2026.csv");
         HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
         using JsonDocument doc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
@@ -511,6 +659,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         // throwing, not that a mapping was actually applied - see
         // ReconciliationEngineMappingTests for that, against real engine input.
         using MultipartFormDataContent discoverForm = new();
+        AddDetails(discoverForm);
         AddFullSet(discoverForm, 0, "JUL2026.csv");
         HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
         using JsonDocument discoverDoc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());

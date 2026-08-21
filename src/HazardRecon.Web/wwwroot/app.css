@@ -160,6 +160,12 @@ body{
 /* one mapper card per uploaded file */
 #map-files{display:grid;gap:20px}
 
+/* the details step: a full-width name field, capped so it does not run the width
+   of the card, and the type picker left-aligned under it rather than pushed to
+   the right edge as .seg is where it sits on the dashboard */
+#step-details input{width:100%;max-width:420px}
+#step-details .seg{margin-left:0}
+
 /* ---------- cards ---------- */
 .card{
   background:var(--cl-card-background-color);border-radius:var(--border-radius);

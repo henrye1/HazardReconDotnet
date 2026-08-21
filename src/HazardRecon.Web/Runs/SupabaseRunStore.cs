@@ -42,10 +42,18 @@ public class SupabaseRunStore : IRunStore
     private static List<RunRecord> Parse(string body) =>
         JsonSerializer.Deserialize<List<RunRecord>>(body) ?? new List<RunRecord>();
 
-    public async Task<RunRecord> CreateAsync(Guid userId, IReadOnlyList<string> setLabels, CancellationToken ct = default)
+    public async Task<RunRecord> CreateAsync(Guid userId, string? name, string runType,
+        IReadOnlyList<string> setLabels, CancellationToken ct = default)
     {
         string body = await _rest.SendAsync(HttpMethod.Post, Table,
-            Json(new { user_id = userId, status_id = RunStatus.IdOf(RunStatus.Ready), set_labels = setLabels }),
+            Json(new
+            {
+                user_id = userId,
+                status_id = RunStatus.IdOf(RunStatus.Ready),
+                name,
+                run_type_id = RunTypeLookup.IdOf(runType),
+                set_labels = setLabels
+            }),
             ReturnRow, ct);
 
         List<RunRecord> rows = Parse(body);

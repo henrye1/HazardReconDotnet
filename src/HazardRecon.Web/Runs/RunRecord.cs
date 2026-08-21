@@ -23,6 +23,25 @@ public class RunRecord
     [JsonIgnore]
     public string Status => RunStatus.CodeOf(StatusId);
 
+    /// <summary>
+    /// What the user called this run. Null for every run created before the
+    /// wizard asked, which the UI falls back out of rather than inventing one.
+    /// </summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    /// <summary>
+    /// Initialised rather than left at 0 so a row that predates the column - or a
+    /// bare create/patch response that does not carry it - still resolves through
+    /// <see cref="RunType"/> instead of throwing on an unknown id.
+    /// </summary>
+    [JsonPropertyName("run_type_id")]
+    public short RunTypeId { get; set; } = RunTypeLookup.IdOf(RunTypeLookup.Default);
+
+    /// <summary>lending/trade_receivables - derived, not its own column.</summary>
+    [JsonIgnore]
+    public string RunType => RunTypeLookup.CodeOf(RunTypeId);
+
     [JsonPropertyName("model_id")]
     public string? ModelId { get; set; }
 

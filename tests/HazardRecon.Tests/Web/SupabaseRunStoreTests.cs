@@ -17,6 +17,8 @@ public class SupabaseRunStoreTests
         "id": "22222222-2222-2222-2222-222222222222",
         "user_id": "11111111-1111-1111-1111-111111111111",
         "status_id": 1,
+        "name": "June 2026 book",
+        "run_type_id": 2,
         "model_id": null,
         "set_labels": ["JUN2026 0.5PCT"],
         "error": null,
@@ -42,16 +44,46 @@ public class SupabaseRunStoreTests
     {
         FakeHttpMessageHandler handler = new((_, _) => (HttpStatusCode.Created, OneRunJson));
 
-        RunRecord run = await Store(handler).CreateAsync(UserId, new[] { "JUN2026 0.5PCT" });
+        RunRecord run = await Store(handler).CreateAsync(UserId, "June 2026 book", RunTypeLookup.TradeReceivables, new[] { "JUN2026 0.5PCT" });
 
         Assert.Equal(RunId, run.Id);
         Assert.Equal(UserId, run.UserId);
         Assert.Equal("ready", run.Status);
+        Assert.Equal("June 2026 book", run.Name);
+        Assert.Equal(RunTypeLookup.TradeReceivables, run.RunType);
         Assert.Equal(new[] { "JUN2026 0.5PCT" }, run.SetLabels);
 
         Assert.Equal("POST", handler.Requests[0].Method);
         Assert.Equal("https://ref.supabase.co/rest/v1/runs", handler.Requests[0].Url);
         Assert.Contains("JUN2026 0.5PCT", handler.Requests[0].Body);
+        // the type goes over the wire as the id the column stores, not the code
+        Assert.Contains("\"name\":\"June 2026 book\"", handler.Requests[0].Body);
+        Assert.Contains("\"run_type_id\":2", handler.Requests[0].Body);
+    }
+
+    [Fact]
+    public async Task TestARowWithoutTheTypeColumnStillResolves()
+    {
+        // a create/patch response, or a row read before the column existed
+        const string NoTypeJson = """
+        [
+          {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "user_id": "11111111-1111-1111-1111-111111111111",
+            "status_id": 1,
+            "set_labels": [],
+            "created_at": "2026-07-30T09:00:00+00:00"
+          }
+        ]
+        """;
+
+        FakeHttpMessageHandler handler = new((_, _) => (HttpStatusCode.OK, NoTypeJson));
+
+        RunRecord? run = await Store(handler).GetAsync(RunId, UserId);
+
+        Assert.NotNull(run);
+        Assert.Null(run!.Name);
+        Assert.Equal(RunTypeLookup.Lending, run.RunType);
     }
 
     [Fact]

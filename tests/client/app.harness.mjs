@@ -602,7 +602,7 @@ async function scenarioR() {
   h.$get("#btn-new-run")._fire("click");
   check("wizard shown after New run", !h.$get("#screen-wizard").classList.contains("hide"));
   check("runs screen hidden", h.$get("#screen-runs").classList.contains("hide"));
-  check("title is step 1", /Choose your input files/.test(h.$get("#step-title").textContent),
+  check("title is step 1", /Name this run/.test(h.$get("#step-title").textContent),
     `title='${h.$get("#step-title").textContent}'`);
 
   // the flow moves the rail forward
@@ -632,8 +632,9 @@ async function scenarioS() {
   // without the reset the old run's detail stays reachable behind a fresh picker
   check("the detail screen is left for the new run", h.$get("#screen-detail").classList.contains("hide"));
   check("the conversation is closed", h.$get("#chat-drawer").classList.contains("hide"));
-  check("folder picker shown again", !h.$get("#step-files").classList.contains("hide"));
-  check("back to step 1", /Choose your input files/.test(h.$get("#step-title").textContent));
+  check("the details step is shown again", !h.$get("#step-details").classList.contains("hide"));
+  check("the folder picker waits its turn", h.$get("#step-files").classList.contains("hide"));
+  check("back to step 1", /Name this run/.test(h.$get("#step-title").textContent));
 }
 
 async function scenarioQ() {
@@ -667,18 +668,26 @@ async function scenarioP() {
   });
   await tick(); await tick(); await tick();
 
+  h.$get("#run-name").value = "Harness run";
   fillSet(h, 0);
   h.$get("#btn-add-set")._fire("click");
   fillSet(h, 1);
 
   await h.ctx.discover();
 
-  check("both sets were sent", posted.length === 4, JSON.stringify(posted.map(p => p.field)));
-  check("fields are numbered per set and named for the role",
-    posted.map(p => p.field).join() === "set0.Exposure,set0.Debug,set1.Exposure,set1.Debug",
+  check("both sets were sent, behind the two details fields", posted.length === 6,
     JSON.stringify(posted.map(p => p.field)));
+  check("fields are numbered per set and named for the role",
+    posted.map(p => p.field).join() ===
+      "name,run_type,set0.Exposure,set0.Debug,set1.Exposure,set1.Debug",
+    JSON.stringify(posted.map(p => p.field)));
+  check("the run details lead the files",
+    posted[0].value === "Harness run" && posted[1].value === "lending",
+    JSON.stringify(posted.slice(0, 2)));
+  // only the file parts carry a filename; the two scalars deliberately do not
   check("the file's own name travels as the filename",
-    posted.every(p => p.filename === "ifrs9.csv" || p.filename === "debug.zip"),
+    posted.filter(p => p.filename !== undefined)
+      .every(p => p.filename === "ifrs9.csv" || p.filename === "debug.zip"),
     JSON.stringify(posted.map(p => p.filename)));
 }
 
@@ -1369,12 +1378,12 @@ async function scenarioY() {
     Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
   await tick(); await tick(); await tick();
 
-  // steps: 0 files, 1 mapping, 2 confirm, 3 run, 4 results (its own screen)
-  const shown = () => ["files", "mapping", "confirm", "run"]
+  // steps: 0 details, 1 files, 2 mapping, 3 confirm, 4 run, 5 results (its own screen)
+  const shown = () => ["details", "files", "mapping", "confirm", "run"]
     .filter(s => !h.$get("#step-" + s).classList.contains("hide"));
 
   h.$get("#nav-new")._fire("click");
-  check("files only, at step 1", shown().join() === "files", `shown=${shown().join()||"none"}`);
+  check("details only, at step 1", shown().join() === "details", `shown=${shown().join()||"none"}`);
 
   h.ctx.showInventory(INVENTORY_FIX);
   check("confirm replaces files", shown().join() === "confirm", `shown=${shown().join()||"none"}`);
@@ -1385,23 +1394,25 @@ async function scenarioY() {
 
   // the rail can return to a step already visited
   check("step 1 is offered", h.$get("#rail-0").disabled === false);
-  check("the mapping step is offered", h.$get("#rail-1").disabled === false);
-  check("the confirm step is offered", h.$get("#rail-2").disabled === false);
-  check("the current step is not offered", h.$get("#rail-3").disabled === true);
-  check("results is not offered before there is one", h.$get("#rail-4").disabled === true);
+  check("the files step is offered", h.$get("#rail-1").disabled === false);
+  check("the mapping step is offered", h.$get("#rail-2").disabled === false);
+  check("the confirm step is offered", h.$get("#rail-3").disabled === false);
+  check("the current step is not offered", h.$get("#rail-4").disabled === true);
+  check("results is not offered before there is one", h.$get("#rail-5").disabled === true);
 
   h.$get("#rail-0")._fire("click");
-  check("the rail returns to the files", shown().join() === "files", `shown=${shown().join()||"none"}`);
-  check("the title follows", /Choose your input files/.test(h.$get("#step-title").textContent));
-  check("forward stays reachable once visited", h.$get("#rail-3").disabled === false);
+  check("the rail returns to the details", shown().join() === "details",
+    `shown=${shown().join()||"none"}`);
+  check("the title follows", /Name this run/.test(h.$get("#step-title").textContent));
+  check("forward stays reachable once visited", h.$get("#rail-4").disabled === false);
 
-  h.$get("#rail-3")._fire("click");
+  h.$get("#rail-4")._fire("click");
   check("and forward again to the run", shown().join() === "run", `shown=${shown().join()||"none"}`);
 
   // a fresh run forgets where the last one got to
   h.$get("#nav-new")._fire("click");
   check("a new run cannot jump ahead", h.$get("#rail-1").disabled === true &&
-    h.$get("#rail-3").disabled === true, "later steps should be closed again");
+    h.$get("#rail-4").disabled === true, "later steps should be closed again");
 }
 
 /* ---------------- YY: walking back mid-run and checking again ---------------- */
@@ -1419,7 +1430,7 @@ async function scenarioYY() {
   check("polling while the run is live", h.timers.armed !== null);
 
   // back to the folders, then check again - the old poll must not survive it
-  h.$get("#rail-0")._fire("click");
+  h.$get("#rail-1")._fire("click");
   check("the rail walked back mid-run", !h.$get("#step-files").classList.contains("hide"));
   check("the run step is put away", h.$get("#step-run").classList.contains("hide"));
 
@@ -1479,7 +1490,8 @@ async function scenarioDR() {
   });
   await tick(); await tick(); await tick();
 
-  // the ordinary route to a run: pick the files, check them, confirm the mapping
+  // the ordinary route to a run: name it, pick the files, check them, confirm
+  h.$get("#run-name").value = "Recovered run";
   fillSet(h, 0);
   await h.ctx.discover();
   await h.ctx.confirmMapping();
@@ -1556,7 +1568,7 @@ async function scenarioZ() {
 
   check("folders is back", !h.$get("#step-files").classList.contains("hide"));
   check("confirm is put away", h.$get("#step-confirm").classList.contains("hide"));
-  check("the rail marks step 1 current", h.$get("#rail-0").disabled === true);
+  check("the rail marks the files step current", h.$get("#rail-1").disabled === true);
 }
 
 /* ---------------- X: a run that kept no log ---------------- */
@@ -1575,9 +1587,55 @@ async function scenarioX() {
     `count='${h.$get("#detail-log-count").textContent}'`);
 }
 
+/* ---------------- RD: the details step gates the rest of the wizard ---------------- */
+async function scenarioRD() {
+  console.log("RD) a run cannot start without a name, and its type is remembered");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  h.$get("#nav-new")._fire("click");
+
+  check("Continue starts disabled", h.$get("#btn-details-next").disabled === true);
+  check("the gate says what is missing", /name is required/i.test(h.$get("#details-gate").textContent),
+    `gate='${h.$get("#details-gate").textContent}'`);
+
+  // whitespace is not a name
+  h.$get("#run-name").value = "   ";
+  h.$get("#run-name")._fire("input");
+  check("whitespace does not count as a name", h.$get("#btn-details-next").disabled === true);
+
+  h.$get("#run-name").value = "June 2026 retail book";
+  h.$get("#run-name")._fire("input");
+  check("Continue is enabled once named", h.$get("#btn-details-next").disabled === false);
+  check("the gate clears", h.$get("#details-gate").textContent === "",
+    `gate='${h.$get("#details-gate").textContent}'`);
+
+  // the type is a two-button choice, and lending is where it starts
+  check("lending is selected by default", h.$get("#rt-lending").classList.contains("on"));
+  check("trade receivables is not", !h.$get("#rt-trade").classList.contains("on"));
+
+  h.$get("#rt-trade")._fire("click");
+  check("picking trade receivables moves the selection",
+    h.$get("#rt-trade").classList.contains("on") && !h.$get("#rt-lending").classList.contains("on"));
+
+  // setStep, not goStep: a fresh wizard has reached nothing, so goStep would
+  // have refused this and left the user on the details step
+  h.$get("#btn-details-next")._fire("click");
+  check("Continue reaches the files step", !h.$get("#step-files").classList.contains("hide"));
+  check("the details step is put away", h.$get("#step-details").classList.contains("hide"));
+  check("the details step stays reachable from the rail", h.$get("#rail-0").disabled === false);
+
+  // a fresh run keeps nothing of the last one
+  h.$get("#nav-new")._fire("click");
+  check("the name is cleared", h.$get("#run-name").value === "");
+  check("Continue is disabled again", h.$get("#btn-details-next").disabled === true);
+  check("the type is back to lending", h.$get("#rt-lending").classList.contains("on"));
+}
+
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
-                 scenarioO, scenarioP, scenarioQ, scenarioR, scenarioS, scenarioT,
+                 scenarioO, scenarioP, scenarioQ, scenarioR, scenarioRD, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
                  scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
