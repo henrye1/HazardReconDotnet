@@ -22,4 +22,12 @@ public class SavedColumnMappingRecord
 
     [JsonPropertyName("source_column")]
     public string SourceColumn { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Where this column sits among the ones mapped to the same field. Zero for a
+    /// single-valued field; 0..n-1, in the order the user picked them, for the
+    /// aging buckets of an age analysis.
+    /// </summary>
+    [JsonPropertyName("ordinal")]
+    public int Ordinal { get; set; }
 }

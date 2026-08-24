@@ -235,11 +235,12 @@
           <div class="card">
             <div class="cardhead"><span>What each file needs</span></div>
             <div class="cardbody reqs">
+              <!-- the only block that differs by run type, so the only one with ids -->
               <div class="req">
                 <span class="ms-icon">assessment</span>
-                <div><b>Exposure file</b>
-                  <span>The IFRS9 population for the reporting date. Needs an account number and an
-                    amount outstanding.</span></div>
+                <div><b id="req-exposure-title">Exposure file</b>
+                  <span id="req-exposure-body">The IFRS9 population for the reporting date. Needs an
+                    account number and an amount outstanding.</span></div>
               </div>
               <div class="req">
                 <span class="ms-icon">receipt_long</span>

@@ -160,13 +160,16 @@ catch (Exception ex)
 const int RunsPerDay = 20;
 
 /// <summary>
-/// The saved-mapping store still speaks one column per field; the resolver speaks
-/// lists, because an age analysis maps several aging columns to one field. Bridged
-/// here until the store itself carries lists.
+/// Which file kind a run's exposure slot is mapped and saved under. A receivables
+/// age analysis has its own field set, so it gets its own kind rather than sharing
+/// the exposure profile.
 /// </summary>
-static IReadOnlyDictionary<string, IReadOnlyList<string>> AsColumnLists(
-    IReadOnlyDictionary<string, string> mapping) =>
-    mapping.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)new[] { kv.Value });
+static string ExposureFileKind(string runType) =>
+    runType == RunTypeLookup.TradeReceivables ? "age_analysis" : "exposure";
+
+/// <summary>The engine's own notion of the run type, which Core declares itself.</summary>
+static EngineRunType ToEngineRunType(string runType) =>
+    runType == RunTypeLookup.TradeReceivables ? EngineRunType.TradeReceivables : EngineRunType.Lending;
 
 /// <summary>
 /// Long enough for "June 2026 retail book, revised write-off export" and short
@@ -255,6 +258,8 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
     if (!RunTypeLookup.IsKnown(runType))
         return Results.BadRequest(new { error = $"Unknown run type '{runType}'." });
 
+    EngineRunType engineRunType = ToEngineRunType(runType);
+
     RunRecord created = await runStore.CreateAsync(
         userId.Value,
         runName,
@@ -286,6 +291,7 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         Id = rid,
         UserId = userId.Value,
         Status = "ready",
+        RunType = runType,
         Roots = received.Sets.Select(s => s.Root).ToList(),
         SetIdentities = received.Sets
             .Select((s, i) => (s.Root, Identity: new SetIdentity(setKeys[i], s.Label)))
@@ -361,12 +367,17 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
 
         string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
 
-        IReadOnlyDictionary<string, string> savedExposure =
-            await columnMappingStore.GetSavedMappingAsync(userId.Value, "exposure", exposureSignature);
+        // A receivables book puts an age analysis in this slot, with a different
+        // field set - so a saved profile is filed under its own kind rather than
+        // being offered a column for a field that does not exist there.
+        IReadOnlyList<MappingFieldSpec> exposureSpecs = MappableFields.ExposureFor(engineRunType);
+        string exposureKind = ExposureFileKind(runType);
+
+        IReadOnlyDictionary<string, IReadOnlyList<string>> savedExposure =
+            await columnMappingStore.GetSavedMappingAsync(userId.Value, exposureKind, exposureSignature);
 
         IReadOnlyList<ResolvedField> exposureFields =
-            columnMapper.Resolve(exposureSniff.Headers, exposureSniff.SampleRows, MappableFields.Exposure,
-                AsColumnLists(savedExposure));
+            columnMapper.Resolve(exposureSniff.Headers, exposureSniff.SampleRows, exposureSpecs, savedExposure);
 
         object FileView(CsvSniff sniff, IReadOnlyList<MappingFieldSpec> specs, IReadOnlyList<ResolvedField> resolved) => new
         {
@@ -376,7 +387,19 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
             fields = specs.Select(spec =>
             {
                 ResolvedField r = resolved.First(x => x.Field == spec.Field);
-                return new { field = spec.Field, note = spec.Note, column = r.Column, confidence = r.Confidence, source = r.Source };
+                return new
+                {
+                    field = spec.Field,
+                    note = spec.Note,
+                    // multiple/columns are the truth for a field that takes several;
+                    // column is kept for the single case so the client's existing
+                    // path is untouched
+                    multiple = spec.Multiple,
+                    column = r.Column,
+                    columns = r.Columns,
+                    confidence = r.Confidence,
+                    source = r.Source
+                };
             })
         };
 
@@ -384,11 +407,11 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
         if (writeoffSniff != null)
         {
             string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
-            IReadOnlyDictionary<string, string> savedWriteoff =
+            IReadOnlyDictionary<string, IReadOnlyList<string>> savedWriteoff =
                 await columnMappingStore.GetSavedMappingAsync(userId.Value, "writeoff", writeoffSignature);
             IReadOnlyList<ResolvedField> writeoffFields =
                 columnMapper.Resolve(writeoffSniff.Headers, writeoffSniff.SampleRows, MappableFields.Writeoff,
-                    AsColumnLists(savedWriteoff));
+                    savedWriteoff);
 
             writeoffView = FileView(writeoffSniff, MappableFields.Writeoff, writeoffFields);
         }
@@ -399,7 +422,7 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
             // null rather than absent, so the client can tell "this set has no
             // write-off file" from "the response is malformed"
             writeoff = writeoffView,
-            exposure = FileView(exposureSniff, MappableFields.Exposure, exposureFields)
+            exposure = FileView(exposureSniff, exposureSpecs, exposureFields)
         });
     }
 
@@ -444,19 +467,24 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
         string key = setElem.GetProperty("key").GetString() ?? "";
         if (!job.MappableFiles.TryGetValue(key, out MappableSetFiles? files)) continue;
 
-        Dictionary<string, string> exposureMapping = ReadMapping(setElem, "exposure");
+        // whichever field set this run's exposure slot was offered - the client
+        // sends back what /api/discover asked for, so both sides must agree on it
+        string exposureKind = ExposureFileKind(job.RunType);
 
-        await columnMappingStore.RecordRunMappingAsync(runGuid, key, "exposure", exposureMapping);
+        Dictionary<string, IReadOnlyList<string>> exposureMapping =
+            MappingRequest.ReadMapping(setElem, "exposure");
+
+        await columnMappingStore.RecordRunMappingAsync(runGuid, key, exposureKind, exposureMapping);
 
         // the sniffer's verdict unless the user overruled it in the mapping step,
         // which decides both how the loaders address columns and which signature
         // the reusable profile is filed under
-        bool exposureHasHeaders = ReadHasHeaders(setElem, "exposure") ?? files.ExposureHasHeaders;
+        bool exposureHasHeaders = MappingRequest.ReadHasHeaders(setElem, "exposure") ?? files.ExposureHasHeaders;
 
         CsvSniff exposureSniff = CsvSniffer.Reinterpret(CsvSniffer.Sniff(files.ExposurePath), exposureHasHeaders);
         string exposureSignature = ColumnSignature.Compute(exposureSniff.Headers, exposureSniff.SampleRows);
 
-        await columnMappingStore.SaveMappingAsync(userId.Value, "exposure", exposureSignature, exposureMapping);
+        await columnMappingStore.SaveMappingAsync(userId.Value, exposureKind, exposureSignature, exposureMapping);
 
         // a set uploaded without a write-off file has nothing to map for it, so
         // there is no signature to save a profile against and no map to hand the
@@ -464,11 +492,12 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
         ColumnMap? writeOffMap = null;
         if (files.WriteOffPath != null)
         {
-            Dictionary<string, string> writeoffMapping = ReadMapping(setElem, "writeoff");
+            Dictionary<string, IReadOnlyList<string>> writeoffMapping =
+                MappingRequest.ReadMapping(setElem, "writeoff");
 
             await columnMappingStore.RecordRunMappingAsync(runGuid, key, "writeoff", writeoffMapping);
 
-            bool writeoffHasHeaders = ReadHasHeaders(setElem, "writeoff") ?? files.WriteOffHasHeaders;
+            bool writeoffHasHeaders = MappingRequest.ReadHasHeaders(setElem, "writeoff") ?? files.WriteOffHasHeaders;
 
             CsvSniff writeoffSniff = CsvSniffer.Reinterpret(CsvSniffer.Sniff(files.WriteOffPath), writeoffHasHeaders);
             string writeoffSignature = ColumnSignature.Compute(writeoffSniff.Headers, writeoffSniff.SampleRows);
@@ -484,31 +513,6 @@ app.MapPost("/api/discover/mapping", async (HttpContext ctx) =>
     }
 
     return Results.Ok(new { ok = true });
-
-    /// <summary>
-    /// The client's "first row is a header" answer for one file, as a sibling of
-    /// its mapping rather than a key inside it, so it cannot be mistaken for a
-    /// field name. Null when the client said nothing, which means keep the guess.
-    /// </summary>
-    static bool? ReadHasHeaders(JsonElement setElem, string fileKind) =>
-        setElem.TryGetProperty(fileKind + "_has_headers", out JsonElement flag)
-            && flag.ValueKind is JsonValueKind.True or JsonValueKind.False
-                ? flag.GetBoolean()
-                : null;
-
-    static Dictionary<string, string> ReadMapping(JsonElement setElem, string fileKind)
-    {
-        Dictionary<string, string> mapping = new();
-        if (setElem.TryGetProperty(fileKind, out JsonElement fileElem) && fileElem.ValueKind == JsonValueKind.Object)
-        {
-            foreach (JsonProperty prop in fileElem.EnumerateObject())
-            {
-                string? value = prop.Value.GetString();
-                if (!string.IsNullOrEmpty(value)) mapping[prop.Name] = value;
-            }
-        }
-        return mapping;
-    }
 }).RequireAuthorization();
 
 // POST /api/run
@@ -571,7 +575,8 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 capturedJob.Roots, capturedJob.Outdir, logger: Logger,
                 analyze: analyst != null, analyst: analyst, stages: stages,
                 columnMaps: capturedJob.ColumnMaps,
-                setIdentities: capturedJob.SetIdentities);
+                setIdentities: capturedJob.SetIdentities,
+                runType: ToEngineRunType(capturedJob.RunType));
 
             // Isolated on purpose: this aggregation only feeds /api/chat. It must never
             // turn a completed run (workbook/CSVs/dashboard already on disk) into an

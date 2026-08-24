@@ -244,30 +244,54 @@ public class FakeRunFileStore : IRunFileStore
 
 public class FakeColumnMappingStore : IColumnMappingStore
 {
-    public Dictionary<(Guid UserId, string FileKind, string ColumnSignature), Dictionary<string, string>> Saved { get; } = new();
-    public List<(Guid RunId, string SetKey, string FileKind, IReadOnlyDictionary<string, string> Mapping)> RunMappings { get; } = new();
+    public Dictionary<(Guid UserId, string FileKind, string ColumnSignature),
+        Dictionary<string, IReadOnlyList<string>>> Saved { get; } = new();
 
-    public Task<IReadOnlyDictionary<string, string>> GetSavedMappingAsync(
+    public List<(Guid RunId, string SetKey, string FileKind,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> Mapping)> RunMappings { get; } = new();
+
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetSavedMappingAsync(
         Guid userId, string fileKind, string columnSignature, CancellationToken ct = default)
     {
-        Dictionary<string, string> mapping = Saved.TryGetValue((userId, fileKind, columnSignature), out var m)
-            ? m : new Dictionary<string, string>();
-        return Task.FromResult<IReadOnlyDictionary<string, string>>(mapping);
+        Dictionary<string, IReadOnlyList<string>> mapping =
+            Saved.TryGetValue((userId, fileKind, columnSignature), out var m)
+                ? m
+                : new Dictionary<string, IReadOnlyList<string>>();
+
+        return Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<string>>>(mapping);
     }
 
+    /// <summary>
+    /// Replaces per field, like the real store: an upsert would leave behind the
+    /// columns a user has since deselected, which is the bug this shape exists to
+    /// prevent, so the fake must not be more forgiving than the thing it stands in
+    /// for.
+    /// </summary>
     public Task SaveMappingAsync(
         Guid userId, string fileKind, string columnSignature,
-        IReadOnlyDictionary<string, string> mapping, CancellationToken ct = default)
+        IReadOnlyDictionary<string, IReadOnlyList<string>> mapping, CancellationToken ct = default)
     {
-        Saved[(userId, fileKind, columnSignature)] = mapping.ToDictionary(kv => kv.Key, kv => kv.Value);
+        if (!Saved.TryGetValue((userId, fileKind, columnSignature), out var existing))
+        {
+            existing = new Dictionary<string, IReadOnlyList<string>>();
+            Saved[(userId, fileKind, columnSignature)] = existing;
+        }
+
+        foreach ((string field, IReadOnlyList<string> columns) in mapping)
+            existing[field] = columns.ToList();
+
         return Task.CompletedTask;
     }
 
     public Task RecordRunMappingAsync(
         Guid runId, string setKey, string fileKind,
-        IReadOnlyDictionary<string, string> mapping, CancellationToken ct = default)
+        IReadOnlyDictionary<string, IReadOnlyList<string>> mapping, CancellationToken ct = default)
     {
         RunMappings.Add((runId, setKey, fileKind, mapping));
         return Task.CompletedTask;
     }
+
+    /// <summary>The single column a field maps to, for the many assertions that expect one.</summary>
+    public static string? Only(IReadOnlyDictionary<string, IReadOnlyList<string>> mapping, string field) =>
+        mapping.TryGetValue(field, out IReadOnlyList<string>? columns) && columns.Count > 0 ? columns[0] : null;
 }

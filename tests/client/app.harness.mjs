@@ -509,6 +509,13 @@ async function scenarioM() {
     `msg='${h.$get("#auth-msg").textContent}'`);
 }
 
+
+/* renderMapping appends its cards, and the fake querySelectorAll cannot see
+   appended children - so a mapper row is reached by walking. A card is
+   [cardhead, hdrtoggle, maptable]; the table's rows live on its cached tbody. */
+const mapRow = (h, fileIdx, rowIdx) =>
+  h.$get("#map-files").children[fileIdx].children[2].children[0]._q["tbody"].children[rowIdx];
+
 /* ---------------- O: file picking ---------------- */
 const mkFile = (name, size) => ({ name: name.split("/").pop(), size });
 
@@ -1371,6 +1378,130 @@ async function scenarioDB() {
   check("no commentary means no card", h.$get("#dash-commentary").innerHTML === "");
 }
 
+
+/* An age analysis discovery response: two key fields picked by header match, and
+   the aging buckets left unmapped, which is what the server sends because the
+   buckets are never guessed. */
+const AGE_ANALYSIS_FIX = {
+  run_id: "RID-AGE",
+  inventory: { root: "r", sets: [{ key: "K", label: "L" }] },
+  problems: [],
+  mapping: [{
+    key: "K",
+    exposure: {
+      has_headers: true,
+      headers: ["Acct", "Txn", "Current", "60 Days", "90 Days"],
+      samples: [["A1", "T1", "10", "40", "60"]],
+      fields: [
+        { field: "LoanAccountNumber", note: "", multiple: false, column: "Acct", columns: ["Acct"], confidence: 1, source: "header_match" },
+        { field: "TransactionNumber", note: "", multiple: false, column: "Txn", columns: ["Txn"], confidence: 1, source: "header_match" },
+        { field: "AgingBuckets", note: "", multiple: true, column: null, columns: [], confidence: null, source: "unmapped" },
+      ],
+    },
+  }],
+};
+
+/* ---------------- TR: the age analysis slot and its bucket picker ---------------- */
+async function scenarioTR() {
+  console.log("TR) trade receivables renames the exposure slot and picks aging buckets");
+  let mappingBody = null;
+  const h = bootAuth({ access_token: "tok-abc" }, (url, opts) => {
+    if (url === "/api/config") return Promise.resolve(jsonRes(200, CFG));
+    if (url === "/api/discover/mapping") {
+      mappingBody = JSON.parse(opts.body);
+      return Promise.resolve(jsonRes(200, { ok: true }));
+    }
+    return Promise.resolve(jsonRes(200, []));
+  });
+  await tick(); await tick(); await tick();
+
+  h.$get("#nav-new")._fire("click");
+
+  // a file picked under one run type survives the flip to the other
+  pickInto(h, 0, "exposure", [mkFile("age.csv", 2048)]);
+  h.$get("#rt-trade")._fire("click");
+
+  check("the slot asks for an age analysis", /Age analysis file/.test(slotRow(h, 0, "exposure").innerHTML),
+    slotRow(h, 0, "exposure").innerHTML.slice(0, 120));
+  check("the help card follows", /Age analysis/.test(h.$get("#req-exposure-title").textContent),
+    `title='${h.$get("#req-exposure-title").textContent}'`);
+  check("the picked file is still there", /age\.csv/.test(slotSubText(h, 0, "exposure")),
+    `sub='${slotSubText(h, 0, "exposure")}'`);
+
+  h.$get("#rt-lending")._fire("click");
+  check("flipping back restores the exposure wording",
+    /Exposure file/.test(slotRow(h, 0, "exposure").innerHTML));
+  h.$get("#rt-trade")._fire("click");
+
+  // now the mapping step for that file
+  h.ctx.showMapping(AGE_ANALYSIS_FIX);
+
+  const bucketRow = mapRow(h, 0, 2);
+  const bar = bucketRow.children[1].children[0];
+
+  check("the buckets are offered as toggles, one per column", bar.children.length === 5,
+    `buttons=${bar.children.length}`);
+  check("none is on to begin with",
+    bar.children.every(b => !b.classList.contains("on")));
+
+  // An empty array is truthy in JS, so this is the assertion that catches a gate
+  // written as `!cols`: with no buckets chosen the run must not be allowed to start.
+  check("zero buckets leaves the mapping incomplete", h.$get("#btn-confirm-map").disabled === true);
+  check("and says so", /aging bucket/.test(h.$get("#map-gate").textContent),
+    `gate='${h.$get("#map-gate").textContent}'`);
+
+  // "60 Days" and "90 Days" are columns 3 and 4
+  mapRow(h, 0, 2).children[1].children[0].children[3]._fire("click");
+  mapRow(h, 0, 2).children[1].children[0].children[4]._fire("click");
+
+  check("confirm opens once a bucket is chosen", h.$get("#btn-confirm-map").disabled === false);
+  check("the summary names what is summed",
+    /60 Days \+ 90 Days/.test(mapRow(h, 0, 2).children[1].children[1].textContent),
+    mapRow(h, 0, 2).children[1].children[1].textContent);
+  check("the sample shows the summed value for the first row",
+    /100/.test(mapRow(h, 0, 2).children[2].textContent),
+    mapRow(h, 0, 2).children[2].textContent);
+
+  // clicking an on bucket takes it off again
+  mapRow(h, 0, 2).children[1].children[0].children[3]._fire("click");
+  check("a second click deselects", /^Summed: 90 Days/.test(mapRow(h, 0, 2).children[1].children[1].textContent),
+    mapRow(h, 0, 2).children[1].children[1].textContent);
+  mapRow(h, 0, 2).children[1].children[0].children[3]._fire("click");
+
+  await h.ctx.confirmMapping();
+
+  const sent = mappingBody.sets[0].exposure;
+  check("the buckets are sent as an array", Array.isArray(sent.AgingBuckets),
+    JSON.stringify(sent));
+  check("in the order they were picked",
+    sent.AgingBuckets.join() === "90 Days,60 Days" || sent.AgingBuckets.join() === "60 Days,90 Days",
+    JSON.stringify(sent.AgingBuckets));
+  check("the single-valued fields are still plain strings",
+    sent.LoanAccountNumber === "Acct" && sent.TransactionNumber === "Txn", JSON.stringify(sent));
+}
+
+/* ---------------- TRH: the header toggle moves a bucket selection ---------------- */
+async function scenarioTRH() {
+  console.log("TRH) re-reading the header row carries each chosen bucket by position");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  h.$get("#rt-trade")._fire("click");
+  h.ctx.showMapping(AGE_ANALYSIS_FIX);
+
+  // pick "Current" (2) and "90 Days" (4)
+  mapRow(h, 0, 2).children[1].children[0].children[2]._fire("click");
+  mapRow(h, 0, 2).children[1].children[0].children[4]._fire("click");
+
+  // now say row one was data after all: the columns become positions 0..4
+  const card = h.$get("#map-files").children[0];
+  card.children[1]._q["input"]._fire("change");
+
+  const summary = mapRow(h, 0, 2).children[1].children[1].textContent;
+  check("both buckets moved to their column positions", /2 \+ 4/.test(summary), summary);
+}
+
 /* ---------------- Y: one step at a time, and the rail goes back ---------------- */
 async function scenarioY() {
   console.log("Y) exactly one wizard step is on screen, and the rail walks back");
@@ -1637,6 +1768,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioRD, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioTR, scenarioTRH, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

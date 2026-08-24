@@ -25,6 +25,14 @@ internal class JobState
     public Guid UserId { get; set; }
 
     public string Status { get; set; } = "ready";
+
+    /// <summary>
+    /// Which kind of book this run covers, as validated by /api/discover. Held here
+    /// because it decides two things after that request has gone: which field list
+    /// the mapping step maps against, and which loader the engine uses. Unlike the
+    /// name, it is behaviour rather than decoration.
+    /// </summary>
+    public string RunType { get; set; } = Runs.RunTypeLookup.Default;
     public List<string> Roots { get; set; } = new();
     public string Outdir { get; set; } = string.Empty;
     public string Indir { get; set; } = string.Empty;

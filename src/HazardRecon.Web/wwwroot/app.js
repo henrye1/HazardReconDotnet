@@ -540,6 +540,9 @@ function setRunType(t) {
   RUN_TYPE = t;
   $("#rt-lending").classList.toggle("on", t === "lending");
   $("#rt-trade").classList.toggle("on", t === "trade_receivables");
+  // the type decides which file the exposure slot is asking for, so the files
+  // step has to be redrawn rather than left describing the other book
+  refreshFilesStep();
 }
 
 $("#run-name").addEventListener("input", updateDetails);
@@ -573,6 +576,22 @@ let MAX_SET_BYTES = 512 * 1024 * 1024;
    there is no lgd_defaults.csv and discovery finds no set at all. The write-off
    file and the scenario are optional, and the inventory step spells out what a
    run gives up when either is missing. */
+/* Only the exposure slot's wording changes with the run type. Its key, its field
+   and its position deliberately do not: the server still renames whatever lands
+   in that slot to the canonical exposure name, so a receivables age analysis
+   needs no new SetFileKind, no discovery change, and no rebuild of SETS when the
+   user flips type with files already picked. */
+const EXPOSURE_KIND_BY_TYPE = {
+  lending: {
+    label: "Exposure file", icon: "assessment",
+    hint: "The IFRS9 population for the reporting date",
+  },
+  trade_receivables: {
+    label: "Age analysis file", icon: "table_chart",
+    hint: "One row per transaction, with the balance across aging buckets",
+  },
+};
+
 const FILE_KINDS = [
   {
     key: "exposure", field: "Exposure", label: "Exposure file", icon: "assessment",
@@ -596,6 +615,42 @@ const FILE_KINDS = [
     accept: ".json",
   },
 ];
+
+/* What the right-hand card says about the exposure slot. Kept beside the slot
+   definition so the two cannot drift apart. */
+const EXPOSURE_REQ_BY_TYPE = {
+  lending: {
+    title: "Exposure file",
+    body: "The IFRS9 population for the reporting date. Needs an account number and an amount outstanding.",
+  },
+  trade_receivables: {
+    title: "Age analysis file",
+    body: "One row per transaction. Needs an account number, a transaction number, and the aging " +
+          "columns - you choose which of those count as defaulted on the next step.",
+  },
+};
+
+/* Repoints the exposure slot and its help text at the current run type. Called
+   whenever the type changes, because setRunType only used to toggle two classes -
+   so the files step could be left describing the other kind of book. */
+function refreshFilesStep() {
+  const kind = EXPOSURE_KIND_BY_TYPE[RUN_TYPE] || EXPOSURE_KIND_BY_TYPE.lending;
+  const slot = FILE_KINDS.find(k => k.key === "exposure");
+  slot.label = kind.label;
+  slot.icon = kind.icon;
+  slot.hint = kind.hint;
+
+  const req = EXPOSURE_REQ_BY_TYPE[RUN_TYPE] || EXPOSURE_REQ_BY_TYPE.lending;
+  const reqTitle = $("#req-exposure-title");
+  const reqBody = $("#req-exposure-body");
+  // written as text: this is copy, not markup
+  if (reqTitle) reqTitle.textContent = req.title;
+  if (reqBody) reqBody.textContent = req.body;
+
+  // at bootstrap this runs before the first set exists, and renderSets would
+  // then draw an empty list over the markup's own
+  if (SETS.length) renderSets();
+}
 
 /* The picked files live here rather than in the inputs, because a set can be
    removed from the middle of the list and the rows after it have to be redrawn -
@@ -924,7 +979,11 @@ function buildMapFiles(j) {
         rows: (view.fields || []).map(f => ({
           field: f.field,
           note: f.note,
+          // a field that takes several columns is picked as a set of toggles
+          // rather than from a dropdown, and carries an array throughout
+          multiple: !!f.multiple,
           suggested: f.column || "",
+          suggestedColumns: f.columns || [],
           confidence: f.confidence,
           source: f.source,
         })),
@@ -942,13 +1001,36 @@ function mappedColumn(file, row) {
   return MAP_EDITS[k] !== undefined ? MAP_EDITS[k] : row.suggested;
 }
 
+/* The same, for a field that takes several columns. Kept separate rather than
+   folded into mappedColumn: that one returns a string, and handing a select an
+   array would stringify it into an option value that matches nothing. */
+function mappedColumns(file, row) {
+  const k = editKey(file.setKey, file.fileKind, row.field);
+  const chosen = MAP_EDITS[k] !== undefined ? MAP_EDITS[k] : row.suggestedColumns;
+  return Array.isArray(chosen) ? chosen : [];
+}
+
+/* Whether a row has what it needs. An empty array is truthy in JS, so a
+   multi-valued field has to be asked for its length - reading `!cols` would call
+   a selection of no buckets "mapped" and let the run start with zero exposure. */
+function rowMapped(file, row) {
+  return row.multiple ? mappedColumns(file, row).length > 0 : !!mappedColumn(file, row);
+}
+
 const SOURCE_LABEL = { header_match: "Header match", saved: "Saved mapping" };
 
 function rowStatus(file, row) {
-  const column = mappedColumn(file, row);
   const edited = MAP_EDITS[editKey(file.setKey, file.fileKind, row.field)] !== undefined;
 
-  if (!column) return { label: "Needs mapping", tone: "warn", icon: "error" };
+  if (!rowMapped(file, row)) return { label: "Needs mapping", tone: "warn", icon: "error" };
+  if (row.multiple) {
+    const n = mappedColumns(file, row).length;
+    return {
+      label: n === 1 ? "1 bucket" : n + " buckets",
+      tone: edited ? "mine" : "ok",
+      icon: edited ? "edit" : "check_circle",
+    };
+  }
   if (edited) return { label: "Set by you", tone: "mine", icon: "edit" };
   if (row.source === "ai_guess") {
     const pct = row.confidence === null || row.confidence === undefined
@@ -996,15 +1078,26 @@ function setFileHasHeaders(file, hasHeaders) {
   const before = columnsFor(file.fileRows, file.hasHeaders);
   const after = columnsFor(file.fileRows, hasHeaders);
 
+  // one column's new address under the other reading of the file, or "" when it
+  // does not have one
+  const moved = (value) => {
+    const at = before.findIndex(c => c.value === value);
+    return at >= 0 && at < after.length ? after[at].value : "";
+  };
+
   file.rows.forEach(row => {
-    const current = mappedColumn(file, row);
     const key = editKey(file.setKey, file.fileKind, row.field);
 
-    if (!current) { MAP_EDITS[key] = ""; return; }
+    if (row.multiple) {
+      // every picked bucket moves on its own, and any that falls off the end of
+      // the row is dropped rather than silently becoming another column
+      MAP_EDITS[key] = mappedColumns(file, row).map(moved).filter(Boolean);
+      return;
+    }
 
-    const at = before.findIndex(c => c.value === current);
-    // a column the file does not actually have cannot be carried over
-    MAP_EDITS[key] = at >= 0 && at < after.length ? after[at].value : "";
+    const current = mappedColumn(file, row);
+    if (!current) { MAP_EDITS[key] = ""; return; }
+    MAP_EDITS[key] = moved(current);
   });
 
   file.hasHeaders = hasHeaders;
@@ -1059,9 +1152,11 @@ function renderMapping() {
 
     file.rows.forEach(row => {
       const column = mappedColumn(file, row);
-      if (!column) unmapped += 1;
-      if (column && row.source === "ai_guess" &&
-          MAP_EDITS[editKey(file.setKey, file.fileKind, row.field)] === undefined) guessed += 1;
+      const picked = row.multiple ? mappedColumns(file, row) : [];
+      const editKeyFor = editKey(file.setKey, file.fileKind, row.field);
+      if (!rowMapped(file, row)) unmapped += 1;
+      if (!row.multiple && column && row.source === "ai_guess" &&
+          MAP_EDITS[editKeyFor] === undefined) guessed += 1;
 
       const status = rowStatus(file, row);
       const chosen = columns.find(c => c.value === column);
@@ -1071,26 +1166,78 @@ function renderMapping() {
         "<b>" + row.field + "</b><span>" + (row.note || "") + "</span>"));
 
       const pickCell = el("td");
-      const sel = el("select");
-      sel.className = column ? "mapsel" : "mapsel bad";
-      // every option's text is a column name out of the uploaded file, so each is
-      // set as text - a header is data, and must never be read as markup
-      sel.appendChild(option("", "— not mapped —"));
-      columns.forEach(c => sel.appendChild(option(c.value, c.label)));
-      // a saved or AI-guessed column can name something this file does not have,
-      // so it is offered explicitly rather than silently falling back to blank
-      if (column && !chosen) sel.appendChild(option(column, column + " (not in this file)"));
-      sel.value = column;
-      sel.addEventListener("change", () => {
-        MAP_EDITS[editKey(file.setKey, file.fileKind, row.field)] = sel.value;
-        renderMapping();
-      });
-      pickCell.appendChild(sel);
+
+      if (row.multiple) {
+        // A bar of toggles rather than a multi-select: which buckets count as
+        // defaulted changes the exposure figure, so it has to be readable at a
+        // glance rather than hidden inside a ctrl-click scroll box.
+        const bar = el("div", "bucketbar");
+        columns.forEach(c => {
+          const btn = el("button");
+          btn.type = "button";
+          const on = picked.includes(c.value);
+          btn.className = on ? "on" : "";
+          // a column name out of the file, so as text
+          btn.textContent = c.label;
+          btn.addEventListener("click", () => {
+            // a new array, not a mutation: the run-recovery path snapshots these
+            // and replays them, and a shared reference would replay the change too
+            MAP_EDITS[editKeyFor] = on
+              ? picked.filter(v => v !== c.value)
+              : picked.concat([c.value]);
+            renderMapping();
+          });
+          bar.appendChild(btn);
+        });
+        pickCell.appendChild(bar);
+
+        // a saved selection can name buckets this month's export does not have
+        const missing = picked.filter(v => !columns.some(c => c.value === v));
+        const summary = el("div", "bucketsum");
+        summary.textContent = picked.length === 0
+          ? "No buckets chosen - nothing would be counted as defaulted"
+          : "Summed: " + picked.join(" + ") +
+            (missing.length ? "  (not in this file: " + missing.join(", ") + ")" : "");
+        if (picked.length === 0 || missing.length) summary.classList.add("bad");
+        pickCell.appendChild(summary);
+      } else {
+        const sel = el("select");
+        sel.className = column ? "mapsel" : "mapsel bad";
+        // every option's text is a column name out of the uploaded file, so each is
+        // set as text - a header is data, and must never be read as markup
+        sel.appendChild(option("", "— not mapped —"));
+        columns.forEach(c => sel.appendChild(option(c.value, c.label)));
+        // a saved or AI-guessed column can name something this file does not have,
+        // so it is offered explicitly rather than silently falling back to blank
+        if (column && !chosen) sel.appendChild(option(column, column + " (not in this file)"));
+        sel.value = column;
+        sel.addEventListener("change", () => {
+          MAP_EDITS[editKeyFor] = sel.value;
+          renderMapping();
+        });
+        pickCell.appendChild(sel);
+      }
+
       tr.appendChild(pickCell);
 
       const sample = el("td", "mapsample");
-      // a row straight out of the file, so as text
-      sample.textContent = chosen && chosen.sample ? chosen.sample : "—";
+      if (row.multiple) {
+        // the sum of the picked buckets on the first data row, so the rule can be
+        // checked against the file rather than trusted
+        const first = file.fileRows[file.hasHeaders ? 1 : 0] || [];
+        let total = 0;
+        let any = false;
+        picked.forEach(v => {
+          const at = columns.findIndex(c => c.value === v);
+          const raw = at >= 0 ? (first[at] || "") : "";
+          const n = Number(String(raw).replace(/[\s,]/g, ""));
+          if (raw !== "" && !Number.isNaN(n)) { total += n; any = true; }
+        });
+        sample.textContent = any ? "= " + total.toLocaleString() : "—";
+      } else {
+        // a row straight out of the file, so as text
+        sample.textContent = chosen && chosen.sample ? chosen.sample : "—";
+      }
       tr.appendChild(sample);
 
       tr.appendChild(el("td", "nowrap",
@@ -1126,7 +1273,7 @@ function renderMapping() {
 
   const gate = $("#map-gate");
   gate.textContent = unmapped
-    ? "Map every field to continue"
+    ? "Map every field to continue - an aging bucket field needs at least one column"
     : "The mapping is saved with the run, and reused next time these files are uploaded";
   gate.classList.toggle("bad", unmapped > 0);
   $("#btn-confirm-map").disabled = unmapped > 0;
@@ -1140,6 +1287,12 @@ function mappingPayload() {
     const set = bySet[file.setKey] || (bySet[file.setKey] = { key: file.setKey });
     const mapping = set[file.fileKind] || (set[file.fileKind] = {});
     file.rows.forEach(row => {
+      if (row.multiple) {
+        // sent as an array even when it holds one, and even when it is empty: an
+        // empty selection is the user's answer, and the server records it as such
+        mapping[row.field] = mappedColumns(file, row);
+        return;
+      }
       const column = mappedColumn(file, row);
       if (column) mapping[row.field] = column;
     });

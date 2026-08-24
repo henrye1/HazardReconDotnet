@@ -91,8 +91,8 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     /// including mappings for other fields. Indexing would throw on those instead
     /// of simply not matching.
     /// </summary>
-    private static string? Mapped(IReadOnlyDictionary<string, string> mapping, string field) =>
-        mapping.TryGetValue(field, out string? column) ? column : null;
+    private static string? Mapped(IReadOnlyDictionary<string, IReadOnlyList<string>> mapping, string field) =>
+        mapping.TryGetValue(field, out IReadOnlyList<string>? columns) && columns.Count > 0 ? columns[0] : null;
 
     private static void AddFile(MultipartFormDataContent form, int setIndex, string kind, string fileName, string body)
     {
@@ -127,11 +127,23 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         AddFile(form, setIndex, "scenario", "scenario.json", "{}");
     }
 
-    /// <summary>Loose (not zipped) debug files so InputDiscoverer.BuildSet actually finds lgd_defaults.csv.</summary>
-    private static void AddDiscoverableSet(MultipartFormDataContent form, int setIndex, string exposureName = "IFRS9 FILE.csv")
+    /// <summary>
+    /// Loose (not zipped) debug files so InputDiscoverer.BuildSet actually finds
+    /// lgd_defaults.csv.
+    /// </summary>
+    /// <param name="exposureBody">
+    /// Override when a test asserts on what mapping it is offered. The saved-profile
+    /// store is a class fixture and a profile is keyed by the file's column shape,
+    /// so two tests sharing this content share a profile - and one of them saving a
+    /// mapping changes what the other is offered.
+    /// </param>
+    private static void AddDiscoverableSet(
+        MultipartFormDataContent form, int setIndex, string exposureName = "IFRS9 FILE.csv",
+        string exposureBody = "A1,2026-06-30,100,Stage 2\n",
+        string writeoffBody = "LoanAccountNumber,CustomerId,Amount,ReportDate\nA1,C1,100,2026-04-30\n")
     {
-        AddFile(form, setIndex, "exposure", exposureName, "A1,2026-06-30,100,Stage 2\n");
-        AddFile(form, setIndex, "writeoff", "WRITEOFF.csv", "LoanAccountNumber,CustomerId,Amount,ReportDate\nA1,C1,100,2026-04-30\n");
+        AddFile(form, setIndex, "exposure", exposureName, exposureBody);
+        AddFile(form, setIndex, "writeoff", "WRITEOFF.csv", writeoffBody);
         AddFile(form, setIndex, "debug", "lgd_defaults.csv", "AccountNumber,EventType,CohortDate,Bucket,Rating,Amount\nA1,Lifetime,2026-05-31,0,5,100.0\n");
         AddFile(form, setIndex, "debug", "pd_scored.csv", "AccountNumber,Category1,ReportDate,BucketRating,NextBucketRating,DeltaLambda\nA1,Loans,2026-01-31,1,2,0.1\n");
         AddFile(form, setIndex, "debug", "debug.json", "{}");
@@ -441,6 +453,108 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
     }
 
     [Fact]
+    public async Task TestATradeReceivablesRunIsOfferedTheAgeAnalysisFields()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddDetails(form, "Receivables run", RunTypeLookup.TradeReceivables);
+        // its own column shape, so no other test's saved profile is offered to it
+        AddDiscoverableSet(form, 0, "AGE2026.csv", "A1,T1,10,20,30,40,50\n");
+
+        HttpResponseMessage response = await client.PostAsync("/api/discover", form);
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using JsonDocument doc = JsonDocument.Parse(body);
+        JsonElement fields = doc.RootElement.GetProperty("mapping")[0].GetProperty("exposure").GetProperty("fields");
+
+        string[] offered = fields.EnumerateArray().Select(f => f.GetProperty("field").GetString()!).ToArray();
+        Assert.Equal(new[] { "LoanAccountNumber", "TransactionNumber", "AgingBuckets" }, offered);
+
+        // the buckets are the one field that takes several columns, and the one the
+        // AI is never asked about
+        JsonElement buckets = fields.EnumerateArray().Single(f => f.GetProperty("field").GetString() == "AgingBuckets");
+        Assert.True(buckets.GetProperty("multiple").GetBoolean());
+        Assert.Equal("unmapped", buckets.GetProperty("source").GetString());
+        Assert.Empty(buckets.GetProperty("columns").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task TestALendingRunIsStillOfferedTheExposureFields()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent form = new();
+        AddDetails(form, "Lending run", RunTypeLookup.Lending);
+        AddDiscoverableSet(form, 0, "LEND2026.csv", "A1,2026-06-30,100,Stage 2,extra,cols\n");
+
+        string body = await (await client.PostAsync("/api/discover", form)).Content.ReadAsStringAsync();
+
+        using JsonDocument doc = JsonDocument.Parse(body);
+        JsonElement fields = doc.RootElement.GetProperty("mapping")[0].GetProperty("exposure").GetProperty("fields");
+
+        Assert.Equal(
+            new[] { "LoanAccountNumber", "AmountOutstanding" },
+            fields.EnumerateArray().Select(f => f.GetProperty("field").GetString()!));
+        Assert.All(fields.EnumerateArray(), f => Assert.False(f.GetProperty("multiple").GetBoolean()));
+    }
+
+    /// <summary>
+    /// The array payload that used to be a hard 500: ReadMapping called GetString()
+    /// on every value, which throws on a JSON array.
+    /// </summary>
+    [Fact]
+    public async Task TestConfirmingAnAgingBucketSelectionRecordsEveryColumn()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        using MultipartFormDataContent discoverForm = new();
+        AddDetails(discoverForm, "Receivables mapping", RunTypeLookup.TradeReceivables);
+        AddDiscoverableSet(discoverForm, 0, "AGEMAP2026.csv", "A1,T1,11,22,33\n");
+        string discoverBody = await (await client.PostAsync("/api/discover", discoverForm)).Content.ReadAsStringAsync();
+
+        using JsonDocument doc = JsonDocument.Parse(discoverBody);
+        string runId = doc.RootElement.GetProperty("run_id").GetString()!;
+        string setKey = doc.RootElement.GetProperty("mapping")[0].GetProperty("key").GetString()!;
+
+        var mappingBody = new
+        {
+            run_id = runId,
+            sets = new object[]
+            {
+                new
+                {
+                    key = setKey,
+                    exposure = new Dictionary<string, object>
+                    {
+                        ["LoanAccountNumber"] = "0",
+                        ["TransactionNumber"] = "1",
+                        ["AgingBuckets"] = new[] { "3", "2" }
+                    }
+                }
+            }
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/discover/mapping", mappingBody);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // filed under its own kind, not shared with the lending exposure profile
+        var recorded = _factory.MappingStore.RunMappings
+            .Where(m => m.FileKind == "age_analysis" && m.SetKey == setKey)
+            .ToList();
+
+        Assert.NotEmpty(recorded);
+        // both buckets, in the order they were sent
+        Assert.Contains(recorded, m => m.Mapping.TryGetValue("AgingBuckets", out var cols)
+            && cols.SequenceEqual(new[] { "3", "2" }));
+        Assert.Contains(_factory.MappingStore.Saved,
+            kv => kv.Key.FileKind == "age_analysis" && kv.Value.ContainsKey("AgingBuckets"));
+    }
+
+    [Fact]
     public async Task TestConfirmingAMappingSavesItForReuse()
     {
         HttpClient client = _factory.CreateClient();
@@ -558,7 +672,11 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
 
         using MultipartFormDataContent discoverForm = new();
         AddDetails(discoverForm);
-        AddDiscoverableSet(discoverForm, 0, "HDR2026.csv");
+        // This test counts how many write-off signatures the shared store holds, so
+        // it needs a write-off shape no other test in here produces - otherwise
+        // whichever ran first has already filed the signature it expects to be new.
+        AddDiscoverableSet(discoverForm, 0, "HDR2026.csv",
+            writeoffBody: "Acct_Hdr,Cust_Hdr,Amt_Hdr,Date_Hdr\nA1,C1,100,2026-04-30\n");
         HttpResponseMessage discoverResponse = await client.PostAsync("/api/discover", discoverForm);
         using JsonDocument doc = JsonDocument.Parse(await discoverResponse.Content.ReadAsStringAsync());
         string runId = doc.RootElement.GetProperty("run_id").GetString()!;
