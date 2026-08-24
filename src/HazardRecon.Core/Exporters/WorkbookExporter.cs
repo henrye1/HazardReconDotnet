@@ -22,16 +22,36 @@ public class WorkbookExporter
             int inWindow = s.WoInWindow;
             string migStatus = s.MigValidation;
 
-            bool clean = untraced == 0 && inWindow == 0 && (migStatus == "PASS" || migStatus == "N/A");
-            lines.Add($"VERDICT ({key}): " + (clean
-                ? "no exceptions - defaults, write-offs and the migration matrix all tie out."
-                : "exceptions found - see the detail below before sign-off."));
+            string exposureName = runType == EngineRunType.TradeReceivables ? "age analysis" : "IFRS9";
+
+            // A skipped check 2 satisfies "inWindow == 0" exactly as a passing one
+            // does, so without this a run given no write-off file reported that
+            // write-offs tie out - in the one sentence that gets read first. It
+            // cannot tie out what it was never given.
+            bool haveWriteOffs = s.WriteOffDistinct > 0;
+            bool clean = haveWriteOffs && untraced == 0 && inWindow == 0
+                && (migStatus == "PASS" || migStatus == "N/A");
+
+            string verdict;
+            if (!haveWriteOffs)
+            {
+                verdict = "incomplete - there was no write-off data, so check 2 did not run and " +
+                          $"defaults could only trace through the {exposureName} file.";
+            }
+            else if (clean)
+            {
+                verdict = "no exceptions - defaults, write-offs and the migration matrix all tie out.";
+            }
+            else
+            {
+                verdict = "exceptions found - see the detail below before sign-off.";
+            }
+
+            lines.Add($"VERDICT ({key}): {verdict}");
 
             if (untraced > 0)
             {
-                string source = runType == EngineRunType.TradeReceivables
-                    ? "write-off or age analysis"
-                    : "write-off or IFRS9";
+                string source = haveWriteOffs ? $"write-off or {exposureName}" : exposureName;
                 lines.Add($"{key}: {untraced:N0} defaulted {Noun(runType)} could not be traced to the {source} file ({AccountUtils.Money(s.UntracedExposure)} exposure).");
             }
 
@@ -116,7 +136,7 @@ public class WorkbookExporter
         // 2. Commentary Sheet
         IXLWorksheet wsCommentary = wb.Worksheets.Add("Commentary");
         wsCommentary.Cell(1, 1).Value = "Management commentary";
-        List<string> cLines = CommentaryLines(results);
+        List<string> cLines = CommentaryLines(results, runType);
         for (int i = 0; i < cLines.Count; i++)
         {
             wsCommentary.Cell(i + 2, 1).Value = cLines[i];

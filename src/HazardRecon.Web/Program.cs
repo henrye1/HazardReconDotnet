@@ -633,7 +633,8 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                     .Select(kv => DashboardPayload.Build(kv.Key, kv.Value)).ToList(),
                 // the same sentences the workbook opens with, so the verdict on screen
                 // cannot disagree with the verdict in the signed-off spreadsheet
-                commentary = WorkbookExporter.CommentaryLines(outResult.Results),
+                commentary = WorkbookExporter.CommentaryLines(
+                    outResult.Results, ToEngineRunType(capturedJob.RunType)),
                 analysis = outResult.Analysis,
                 // named on the analysis card, so the reader knows what wrote it
                 model_id = capturedJob.ModelId,
@@ -653,7 +654,8 @@ app.MapPost("/api/run", async (HttpContext ctx) =>
                 .Select(kv => RunSetResultMapper.Build(runGuid, capturedJob.UserId, kv.Key, kv.Value))
                 .ToList();
             outputFileRecords = RunSetResultMapper.BuildOutputFiles(runGuid, capturedJob.UserId, capturedJob.Outdir, outResult);
-            commentaryRecords = WorkbookExporter.CommentaryLines(outResult.Results)
+            commentaryRecords = WorkbookExporter.CommentaryLines(
+                    outResult.Results, ToEngineRunType(capturedJob.RunType))
                 .Select((line, i) => new RunCommentaryLineRecord
                     { RunId = runGuid, UserId = capturedJob.UserId, Line = line, Position = i })
                 .ToList();

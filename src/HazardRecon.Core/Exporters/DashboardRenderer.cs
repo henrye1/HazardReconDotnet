@@ -105,7 +105,7 @@ public class DashboardRenderer
         sb.AppendLine("    </div>");
 
         // Management Commentary
-        List<string> cLines = WorkbookExporter.CommentaryLines(results);
+        List<string> cLines = WorkbookExporter.CommentaryLines(results, runType);
         if (cLines.Count > 0)
         {
             sb.AppendLine("    <div class='commentary'>");

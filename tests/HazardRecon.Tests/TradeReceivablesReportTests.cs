@@ -158,7 +158,10 @@ public class TradeReceivablesReportTests : IDisposable
         {
             Full = untraced,
             Untraced = untraced,
-            Summary = new ReconciliationSummary { UntracedTotal = 1, UntracedExposure = 300 }
+            Summary = new ReconciliationSummary
+            {
+                UntracedTotal = 1, UntracedExposure = 300, WriteOffDistinct = 5
+            }
         };
 
         List<string> lines = WorkbookExporter.CommentaryLines(
@@ -167,6 +170,128 @@ public class TradeReceivablesReportTests : IDisposable
         Assert.Contains(lines, l => l.Contains("defaulted customer(s)"));
         // and it names the file a receivables run actually traced against
         Assert.Contains(lines, l => l.Contains("age analysis"));
+    }
+
+    /// <summary>
+    /// The bug a real run turned up: a skipped check 2 satisfies "no in-window
+    /// write-offs" exactly as a passing one does, so a run given no write-off file
+    /// reported that write-offs tie out - in the sentence read first. It cannot tie
+    /// out what it was never given.
+    /// </summary>
+    [Fact]
+    public void TestNoWriteOffDataIsReportedAsIncompleteRatherThanClean()
+    {
+        SingleSetResult set = new()
+        {
+            Full = new List<DefaultAccountRecord>(),
+            Untraced = new List<DefaultAccountRecord>(),
+            Summary = new ReconciliationSummary
+            {
+                // everything traced, nothing in window, matrix reconciles - and no
+                // write-off population at all
+                UntracedTotal = 0, WoInWindow = 0, MigValidation = "PASS", WriteOffDistinct = 0
+            }
+        };
+
+        List<string> lines = WorkbookExporter.CommentaryLines(
+            new Dictionary<string, SingleSetResult> { ["TR"] = set }, EngineRunType.TradeReceivables);
+
+        Assert.Contains("incomplete", lines[0]);
+        Assert.Contains("check 2 did not run", lines[0]);
+        // the claim that must not be made
+        Assert.DoesNotContain("tie out", lines[0]);
+        // and the client reads this word to pick the chip, so it must not appear
+        Assert.DoesNotContain("no exceptions", lines[0]);
+        // it names the file the defaults could actually trace through
+        Assert.Contains("age analysis", lines[0]);
+    }
+
+    [Fact]
+    public void TestALendingRunWithNoWriteOffIsAlsoIncomplete()
+    {
+        SingleSetResult set = new()
+        {
+            Full = new List<DefaultAccountRecord>(),
+            Untraced = new List<DefaultAccountRecord>(),
+            Summary = new ReconciliationSummary
+            {
+                UntracedTotal = 0, WoInWindow = 0, MigValidation = "PASS", WriteOffDistinct = 0
+            }
+        };
+
+        List<string> lines = WorkbookExporter.CommentaryLines(
+            new Dictionary<string, SingleSetResult> { ["LEND"] = set });
+
+        Assert.Contains("incomplete", lines[0]);
+        Assert.Contains("IFRS9", lines[0]);
+    }
+
+    /// <summary>The clean verdict's wording is what the client matches on, so it is pinned.</summary>
+    [Fact]
+    public void TestARunWithWriteOffsAndNoFindingsIsStillClean()
+    {
+        SingleSetResult set = new()
+        {
+            Full = new List<DefaultAccountRecord>(),
+            Untraced = new List<DefaultAccountRecord>(),
+            Summary = new ReconciliationSummary
+            {
+                UntracedTotal = 0, WoInWindow = 0, MigValidation = "PASS", WriteOffDistinct = 42
+            }
+        };
+
+        List<string> lines = WorkbookExporter.CommentaryLines(
+            new Dictionary<string, SingleSetResult> { ["LEND"] = set });
+
+        Assert.Equal(
+            "VERDICT (LEND): no exceptions - defaults, write-offs and the migration matrix all tie out.",
+            lines[0]);
+    }
+
+    [Fact]
+    public void TestFindingsWithWriteOffsPresentStillReportExceptions()
+    {
+        SingleSetResult set = new()
+        {
+            Full = new List<DefaultAccountRecord>(),
+            Untraced = new List<DefaultAccountRecord>(),
+            Summary = new ReconciliationSummary
+            {
+                UntracedTotal = 3, UntracedExposure = 100, WoInWindow = 0,
+                MigValidation = "PASS", WriteOffDistinct = 42
+            }
+        };
+
+        List<string> lines = WorkbookExporter.CommentaryLines(
+            new Dictionary<string, SingleSetResult> { ["LEND"] = set });
+
+        Assert.Contains("exceptions found", lines[0]);
+        Assert.Contains("write-off or IFRS9", lines[1]);
+    }
+
+    /// <summary>
+    /// With no write-off data the untraced line must not offer the write-off file as
+    /// somewhere those defaults could have been found.
+    /// </summary>
+    [Fact]
+    public void TestTheUntracedLineNamesOnlyTheFilesTheRunHad()
+    {
+        SingleSetResult set = new()
+        {
+            Full = new List<DefaultAccountRecord>(),
+            Untraced = new List<DefaultAccountRecord>(),
+            Summary = new ReconciliationSummary
+            {
+                UntracedTotal = 3, UntracedExposure = 100, WoInWindow = 0,
+                MigValidation = "PASS", WriteOffDistinct = 0
+            }
+        };
+
+        List<string> lines = WorkbookExporter.CommentaryLines(
+            new Dictionary<string, SingleSetResult> { ["TR"] = set }, EngineRunType.TradeReceivables);
+
+        Assert.Contains("could not be traced to the age analysis file", lines[1]);
+        Assert.DoesNotContain("write-off or", lines[1]);
     }
 
     [Fact]
@@ -179,7 +304,10 @@ public class TradeReceivablesReportTests : IDisposable
         {
             Full = untraced,
             Untraced = untraced,
-            Summary = new ReconciliationSummary { UntracedTotal = 1, UntracedExposure = 100 }
+            Summary = new ReconciliationSummary
+            {
+                UntracedTotal = 1, UntracedExposure = 100, WriteOffDistinct = 5
+            }
         };
 
         List<string> lines = WorkbookExporter.CommentaryLines(

@@ -997,6 +997,70 @@ const INVENTORY_FIX = {
 };
 
 /* ---------------- DA: the dashboard's tiles, commentary and AI analysis ---------------- */
+/* ---------------- DN: a set with nothing to flag says so ---------------- */
+async function scenarioDN() {
+  console.log("DN) a set with no exceptions explains itself rather than rendering blank");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  // The shape a real receivables run produced: every default traced, and no
+  // write-off file at all - so all three blocks of the set detail card are empty.
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.dashboard_sets = [Object.assign(JSON.parse(JSON.stringify(DASH_SET_FIX)), {
+    top_untraced: [],
+    wo_exceptions: [],
+    last_buckets: [],
+    defaults_distinct: 993,
+    writeoff_distinct: 0,
+  })];
+  res.commentary = [
+    "VERDICT (K): incomplete - there was no write-off data, so check 2 did not run and " +
+    "defaults could only trace through the age analysis file.",
+  ];
+
+  h.ctx.showResults(res, []);
+
+  const detail = h.$get("#dash-setdetail").innerHTML;
+  check("the card is not left blank", /Nothing to flag/.test(detail), detail.slice(0, 300));
+  check("it says the defaults all traced", /every default traced/.test(detail), detail.slice(0, 300));
+  check("and that check 2 never ran", /check 2 did not run/.test(detail), detail.slice(0, 300));
+
+  // the verdict is a third state: neither a clean bill of health nor a finding
+  const commentary = h.$get("#dash-commentary").innerHTML;
+  check("the verdict chip says incomplete", /Incomplete/.test(commentary), commentary.slice(0, 300));
+  check("and is not styled as clean",
+    !/chip done/.test(commentary) && /chip warn/.test(commentary), commentary.slice(0, 300));
+}
+
+/* ---------------- DNC: a set with findings still lists them ---------------- */
+async function scenarioDNC() {
+  console.log("DNC) a set with exceptions still shows them, and no explanation line");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  // DASH_SET_FIX has all three tables empty, so this one is given findings
+  const res = JSON.parse(JSON.stringify(DETAIL_RESULT));
+  res.dashboard_sets = [Object.assign(JSON.parse(JSON.stringify(DASH_SET_FIX)), {
+    top_untraced: [{ account: "A3", cohort_date: "2026-05-31", rating: "5", amount: "R 300.00" }],
+    wo_exceptions: [],
+    last_buckets: [],
+    defaults_distinct: 3,
+    writeoff_distinct: 2,
+  })];
+  res.commentary = ["VERDICT (K): no exceptions - defaults, write-offs and the migration matrix all tie out."];
+  h.ctx.showResults(res, []);
+
+  const detail = h.$get("#dash-setdetail").innerHTML;
+  check("the untraced table is drawn", /Top untraced defaults/.test(detail), detail.slice(0, 200));
+  check("and no explanation line is added", !/Nothing to flag/.test(detail));
+
+  const commentary = h.$get("#dash-commentary").innerHTML;
+  check("a clean verdict is still styled clean",
+    /chip done/.test(commentary) && /No exceptions/.test(commentary), commentary.slice(0, 200));
+}
+
 async function scenarioDA() {
   console.log("DA) dashboard tiles, commentary and the AI analysis expander");
   const h = bootAuth({ access_token: "tok-abc" }, (url) =>
@@ -1769,6 +1833,6 @@ for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenario
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioRD, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioTR, scenarioTRH, scenarioDR, scenarioDS, scenarioZ, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioTR, scenarioTRH, scenarioDR, scenarioDS, scenarioZ, scenarioDN, scenarioDNC, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

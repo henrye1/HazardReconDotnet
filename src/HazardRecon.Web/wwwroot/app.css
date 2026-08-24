@@ -257,6 +257,9 @@ tr.clickable:hover .rowgo{color:var(--cl-action-color)}
   border-color:var(--cl-status-running-border)}
 .chip.error,.chip.interrupted{background:var(--cl-status-failed-bg);color:var(--cl-status-failed-text);
   border-color:var(--cl-status-failed-border)}
+/* a check that could not run is neither pass nor fail */
+.chip.warn{background:var(--cl-warning-bg);color:var(--cl-warning-text);
+  border-color:var(--cl-warning-border)}
 
 /* ---------- step rail ---------- */
 /* the white band spans the page; the steps themselves are centred within it */

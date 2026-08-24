@@ -1942,6 +1942,19 @@ function renderSetDetail(res) {
           <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
       </div>` : "";
 
+    /* Every block in this card is about an exception, so a set with none renders
+       as a heading over nothing. Say why instead - and be specific, because "no
+       untraced defaults" and "check 2 never ran" mean very different things. */
+    let nothing = "";
+    if (!untraced && !buckets && !exceptions) {
+      const why = [];
+      if ((d.defaults_distinct || 0) === 0) why.push("no defaults were found at bucket 0");
+      else why.push("every default traced");
+      if ((d.writeoff_distinct || 0) === 0) why.push("there was no write-off data, so check 2 did not run");
+      else why.push("no write-off fell outside the default population");
+      nothing = `<p class="hint" style="margin:0">Nothing to flag for this set &mdash; ${why.join(", and ")}.</p>`;
+    }
+
     return `
       <div class="card">
         <div class="cardhead strong wrapped">
@@ -1949,6 +1962,7 @@ function renderSetDetail(res) {
           <span class="sub">${escapeHtml(d.label || "")}</span>
         </div>
         <div class="cardbody" style="display:grid;gap:24px">
+          ${nothing}
           ${block("Top untraced defaults", "",
             `<th>${idHeading()}</th><th>Cohort date</th><th class="num">Rating</th>` +
             `<th class="num">Default amount</th>`, untraced)}
@@ -2281,14 +2295,19 @@ function renderDashCommentary(res) {
   if (!lines.length) { $("#dash-commentary").innerHTML = ""; return; }
 
   const verdict = lines[0];
-  const clean = /no exceptions/i.test(verdict);
+  // three states, not two: a run that could not perform a check is neither clean
+  // nor a list of findings, and calling it either would misrepresent it
+  const incomplete = /:\s*incomplete\b/i.test(verdict);
+  const clean = !incomplete && /no exceptions/i.test(verdict);
+  const tone = incomplete ? "warn" : clean ? "done" : "error";
+  const chip = incomplete ? "Incomplete" : clean ? "No exceptions" : "Exceptions found";
 
   $("#dash-commentary").innerHTML = `
     <div class="card accent">
       <div class="cardbody" style="display:grid;gap:8px">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span class="ehead">Executive commentary</span>
-          <span class="chip ${clean ? "done" : "error"}">${clean ? "No exceptions" : "Exceptions found"}</span>
+          <span class="chip ${tone}">${chip}</span>
         </div>
         <p class="verdict">${escapeHtml(verdict)}</p>
         ${lines.slice(1).map(l => `<p class="cline">${escapeHtml(l)}</p>`).join("")}
