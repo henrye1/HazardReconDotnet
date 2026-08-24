@@ -17,9 +17,8 @@ public class MigrationMatrixBuilder
     };
 
     /// <param name="detailFor">
-    /// Which accounts to keep a last-rating for. Passed at **account** grain by
-    /// the engine, because its only consumer is check 2, which compares against
-    /// the write-off file.
+    /// Which keys to keep a last-rating for - the write-off population, at whatever
+    /// grain the run is keyed on.
     /// </param>
     public MigrationMatrixResult BuildMigrationMatrix(
         string? pdScoredPath, HashSet<string>? detailFor = null, Action<string, string>? log = null,
@@ -40,27 +39,22 @@ public class MigrationMatrixBuilder
         csv.Read();
         csv.ReadHeader();
 
-        bool composite = runType == EngineRunType.TradeReceivables;
+        // keyed the same way as the defaults file, or nothing would match
+        bool byCustomer = runType == EngineRunType.TradeReceivables;
+        string idColumn = byCustomer ? "ClientNumber" : "AccountNumber";
 
         // same refusal, same wording as the defaults file - see CsvGuards
-        if (composite)
-            CsvGuards.RequireColumn(csv, true, "ClientNumber", "the client number", pdScoredPath);
+        if (byCustomer)
+            CsvGuards.RequireColumn(csv, true, idColumn, "the client number", pdScoredPath);
 
         while (csv.Read())
         {
             result.RowsTotal++;
-            string acct = AccountUtils.NormaliseAccount(csv.GetField("AccountNumber"));
-            string client = composite
-                ? AccountUtils.NormaliseAccount(csv.GetField("ClientNumber"))
-                : string.Empty;
+            string acct = AccountUtils.NormaliseAccount(csv.GetField(idColumn));
 
             if (!string.IsNullOrEmpty(acct))
             {
-                // the scored population is held at both grains: the join grain, so
-                // it can be intersected with the defaults and the age analysis, and
-                // account grain, which is what check 2 needs
-                result.ScoredAccts.Add(AccountUtils.CompositeKey(acct, client));
-                result.ScoredAccounts.Add(acct);
+                result.ScoredAccts.Add(acct);
             }
 
             string reportDateStr = csv.GetField("ReportDate") ?? string.Empty;
@@ -78,9 +72,8 @@ public class MigrationMatrixBuilder
                 result.RawCounts[key] = result.RawCounts.GetValueOrDefault(key, 0) + 1;
             }
 
-            // account, not the join key: detailFor is account grain, and so is the
-            // check that reads LastRating. Keying this composite would leave every
-            // lookup missing and quietly report no last-seen bucket for anything.
+            // detailFor and LastRating are at the same grain as everything else in
+            // the run, so this matches whichever column the run is keyed on
             if (detailFor.Contains(acct) && parsedDate)
             {
                 if (!result.LastRating.TryGetValue(acct, out var prev) ||

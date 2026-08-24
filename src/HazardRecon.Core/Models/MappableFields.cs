@@ -22,6 +22,19 @@ public static class MappableFields
         new MappingFieldSpec("ReportDate", "Classifies each write-off as pre-, in- or post-window")
     };
 
+    /// <summary>
+    /// The same file for a receivables run, where the two identifiers swap roles:
+    /// the customer number is what defaults and the age analysis are keyed on, so
+    /// it is the join key, and the loan account number is carried instead.
+    /// </summary>
+    public static readonly IReadOnlyList<MappingFieldSpec> WriteoffByCustomer = new[]
+    {
+        new MappingFieldSpec("CustomerId", "Normalised and used as the join key against defaults and the age analysis"),
+        new MappingFieldSpec("LoanAccountNumber", "Carried through - not used for matching logic"),
+        new MappingFieldSpec("Amount", "Summed per customer into the write-off exposure"),
+        new MappingFieldSpec("ReportDate", "Classifies each write-off as pre-, in- or post-window")
+    };
+
     public static readonly IReadOnlyList<MappingFieldSpec> Exposure = new[]
     {
         new MappingFieldSpec("LoanAccountNumber", "Join key - Check 1 traces defaults into this population"),
@@ -29,16 +42,14 @@ public static class MappableFields
     };
 
     /// <summary>
-    /// What a trade receivables run reads instead of <see cref="Exposure"/>. The
-    /// account number alone does not identify a receivable, so the transaction
-    /// number is part of the join key rather than carried for information; and
-    /// there is no single balance column, so which aging buckets count as
-    /// defaulted is the user's call.
+    /// What a trade receivables run reads instead of <see cref="Exposure"/>. An age
+    /// analysis carries no loan account number at all - the customer number is the
+    /// identifier - and no single balance column, so which aging buckets count as
+    /// defaulted is the user's call rather than the file's.
     /// </summary>
     public static readonly IReadOnlyList<MappingFieldSpec> AgeAnalysis = new[]
     {
-        new MappingFieldSpec("LoanAccountNumber", "First part of the join key - traced against the defaults file"),
-        new MappingFieldSpec("TransactionNumber", "Second part of the join key - matched to ClientNumber in the defaults file"),
+        new MappingFieldSpec("ClientNumber", "The join key - matched to ClientNumber in the defaults file"),
         new MappingFieldSpec(
             "AgingBuckets",
             "The aging columns that count as defaulted - summed per row to give the exposure",
@@ -48,4 +59,8 @@ public static class MappableFields
     /// <summary>The field list a run of this type maps its exposure-slot file against.</summary>
     public static IReadOnlyList<MappingFieldSpec> ExposureFor(EngineRunType runType) =>
         runType == EngineRunType.TradeReceivables ? AgeAnalysis : Exposure;
+
+    /// <summary>The write-off field list for this run type - the two identifiers swap roles.</summary>
+    public static IReadOnlyList<MappingFieldSpec> WriteoffFor(EngineRunType runType) =>
+        runType == EngineRunType.TradeReceivables ? WriteoffByCustomer : Writeoff;
 }

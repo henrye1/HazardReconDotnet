@@ -168,25 +168,23 @@ public class DataLoaders
         csv.Read();
         csv.ReadHeader();
 
-        bool composite = runType == EngineRunType.TradeReceivables;
+        // A receivables book is reconciled per customer, so the customer number is
+        // the identifier - not an extra one alongside the account.
+        bool byCustomer = runType == EngineRunType.TradeReceivables;
+        string idColumn = byCustomer ? "ClientNumber" : "AccountNumber";
 
         // Refused before a row is read, and refused rather than degraded: this
         // config returns null for a column the file does not have, so without the
-        // guard every key would come out as "A1<sep>" and match nothing - a 0%
-        // trace rate that looks like a finding rather than a malformed export.
-        if (composite)
-            CsvGuards.RequireColumn(csv, true, "ClientNumber", "the client number", lgdPath);
+        // guard every key would come out empty and match nothing - a 0% trace rate
+        // that looks like a finding rather than a malformed export.
+        if (byCustomer)
+            CsvGuards.RequireColumn(csv, true, idColumn, "the client number", lgdPath);
 
         List<RawLgdRow> allRows = new();
         while (csv.Read())
         {
-            string rawAcct = csv.GetField("AccountNumber") ?? string.Empty;
+            string rawAcct = csv.GetField(idColumn) ?? string.Empty;
             string acct = AccountUtils.NormaliseAccount(rawAcct);
-
-            // normalised the same way as the account: client numbers come out of
-            // the same float-mangling exports and carry the same trailing ".0"
-            string rawClient = composite ? (csv.GetField("ClientNumber") ?? string.Empty) : string.Empty;
-            string client = AccountUtils.NormaliseAccount(rawClient);
             string bucket = (csv.GetField("Bucket") ?? string.Empty).Trim();
             string eventType = (csv.GetField("EventType") ?? string.Empty).Trim();
             string cohortDate = csv.GetField("CohortDate") ?? string.Empty;
@@ -198,8 +196,7 @@ public class DataLoaders
             allRows.Add(new RawLgdRow
             {
                 RawAccountNumber = rawAcct,
-                RawClientNumber = rawClient.Trim(),
-                AccountNormalized = AccountUtils.CompositeKey(acct, client),
+                AccountNormalized = acct,
                 Bucket = bucket,
                 BucketN = bktN,
                 EventType = eventType,
@@ -209,11 +206,17 @@ public class DataLoaders
             });
         }
 
-        // MinLgdBalance per join key across all rows
+        // MinLgdBalance per join key across all rows. Summed for receivables for the
+        // same reason the default amount is: a customer's minimum-across-one-invoice
+        // is not comparable with an exposure that covers all of them.
         Dictionary<string, double> minLgd = allRows
             .Where(r => r.Amount.HasValue)
             .GroupBy(r => r.AccountNormalized)
-            .ToDictionary(g => g.Key, g => g.Min(r => r.Amount!.Value));
+            .ToDictionary(
+                g => g.Key,
+                g => byCustomer
+                    ? g.GroupBy(r => r.RawAccountNumber).Sum(a => a.Min(r => r.Amount!.Value))
+                    : g.Min(r => r.Amount!.Value));
 
         // Post-default trajectory: prefer Lifetime event type
         List<RawLgdRow> traj = allRows.Where(r => string.Equals(r.EventType, "Lifetime", StringComparison.OrdinalIgnoreCase)).ToList();
@@ -231,22 +234,29 @@ public class DataLoaders
         // Filter Bucket == 0 defaults.
         //
         // This grouping IS the definition of "a default": one record per distinct
-        // join key, taking its largest Bucket-0 amount. For trade receivables that
-        // key is (account, client), so an account with three defaulted
-        // transactions now yields three defaults where it used to yield one. That
-        // is the intended redefinition and it moves every count and total in the
-        // summary from account grain to transaction grain.
-        var bucket0Rows = allRows
+        // join key. For lending that key is the account, and the largest Bucket-0
+        // amount wins - one account's rows are restatements of one debt.
+        //
+        // A customer, though, can hold several genuinely separate defaulted
+        // invoices, so taking the largest would silently discard the rest and
+        // understate the exposure. For receivables they are summed instead, and the
+        // descriptive fields come from the largest contributor.
+        var bucket0Groups = allRows
             .Where(r => r.Bucket == "0")
             .GroupBy(r => r.AccountNormalized)
-            .Select(g => g.OrderByDescending(r => r.Amount ?? 0.0).First())
+            .Select(g => new
+            {
+                Largest = g.OrderByDescending(r => r.Amount ?? 0.0).First(),
+                Total = byCustomer ? g.Sum(r => r.Amount ?? 0.0) : (double?)null
+            })
             .ToList();
 
         List<DefaultAccountRecord> defaults = new();
-        foreach (RawLgdRow d0 in bucket0Rows)
+        foreach (var group in bucket0Groups)
         {
+            RawLgdRow d0 = group.Largest;
             string acct = d0.AccountNormalized;
-            double defAmt = d0.Amount ?? 0.0;
+            double defAmt = group.Total ?? d0.Amount ?? 0.0;
             double minBal = minLgd.TryGetValue(acct, out double mb) ? mb : defAmt;
 
             double? lastBucket = null;
@@ -279,7 +289,6 @@ public class DataLoaders
             defaults.Add(new DefaultAccountRecord
             {
                 AccountNumber = d0.RawAccountNumber,
-                TransactionNumber = d0.RawClientNumber,
                 AccountNormalized = acct,
                 CohortDate = d0.CohortDate,
                 Rating = d0.Rating,
@@ -299,8 +308,13 @@ public class DataLoaders
         return defaults;
     }
 
+    /// <param name="runType">
+    /// Receivables join on the customer number, because that is what the defaults
+    /// and the age analysis are keyed on - the account number is carried instead.
+    /// </param>
     public (List<WriteOffAggRecord> AggRecords, HashSet<string> AccountSet) LoadWriteoff(
-        string? path, Action<string, string>? log = null, ColumnMap? columnMap = null)
+        string? path, Action<string, string>? log = null, ColumnMap? columnMap = null,
+        EngineRunType runType = EngineRunType.Lending)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
@@ -318,20 +332,29 @@ public class DataLoaders
             csv.ReadHeader();
         }
 
-        string acctCol = columnMap?.Resolve("LoanAccountNumber") ?? "LoanAccountNumber";
-        string custCol = columnMap?.Resolve("CustomerId") ?? "CustomerId";
+        string accountCol = columnMap?.Resolve("LoanAccountNumber") ?? "LoanAccountNumber";
+        string customerCol = columnMap?.Resolve("CustomerId") ?? "CustomerId";
         string amtCol = columnMap?.Resolve("Amount") ?? "Amount";
         string dateCol = columnMap?.Resolve("ReportDate") ?? "ReportDate";
 
+        // The two identifiers swap roles by run type: whichever one the defaults are
+        // keyed on is the join key here, and the other is carried through.
+        bool byCustomer = runType == EngineRunType.TradeReceivables;
+        string keyCol = byCustomer ? customerCol : accountCol;
+        string carriedCol = byCustomer ? accountCol : customerCol;
+        string keyWhat = byCustomer ? "the write-off customer number" : "the write-off account number";
+
         // the join key is not optional: check 1 traces every default through it
-        CsvGuards.RequireColumn(csv, hasHeaders, acctCol, "the write-off account number", path);
+        CsvGuards.RequireColumn(csv, hasHeaders, keyCol, keyWhat, path);
 
         // the rest each cost one figure rather than the whole check, so they are
         // reported and carried on with: no date limits check 2's window, no amount
         // leaves the write-off totals at zero
         foreach ((string col, string what) in new[]
         {
-            (custCol, "customer id"), (amtCol, "write-off amount"), (dateCol, "report date"),
+            (carriedCol, byCustomer ? "account number" : "customer id"),
+            (amtCol, "write-off amount"),
+            (dateCol, "report date"),
         })
         {
             if (hasHeaders && csv.HeaderRecord != null && !csv.HeaderRecord.Contains(col))
@@ -343,10 +366,13 @@ public class DataLoaders
         while (csv.Read())
         {
             dataRows++;
-            string acct = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, acctCol));
+            // normalised whichever column it comes from: a customer number arrives
+            // from the same float-mangling exports and carries the same trailing ".0",
+            // so reading it raw would stop it matching the defaults file
+            string acct = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, keyCol));
             if (string.IsNullOrEmpty(acct)) continue;
 
-            string custId = Field(csv, hasHeaders, custCol) ?? string.Empty;
+            string custId = Field(csv, hasHeaders, carriedCol) ?? string.Empty;
             double amt = double.TryParse(Field(csv, hasHeaders, amtCol), NumberStyles.Any, CultureInfo.InvariantCulture, out double val) ? val : 0.0;
             DateTime? reportDate = DateTime.TryParse(Field(csv, hasHeaders, dateCol), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dt) ? dt : null;
 
@@ -359,7 +385,7 @@ public class DataLoaders
             });
         }
 
-        CsvGuards.RequireAnyAccounts(dataRows, rawRows.Count, acctCol, path);
+        CsvGuards.RequireAnyAccounts(dataRows, rawRows.Count, keyCol, path);
 
         List<WriteOffAggRecord> agg = rawRows
             .GroupBy(r => r.AccountNormalized)
@@ -380,7 +406,7 @@ public class DataLoaders
         DateTime? maxDate = rawRows.Where(r => r.ReportDate.HasValue).Max(r => r.ReportDate);
 
         string dateRangeStr = (minDate.HasValue && maxDate.HasValue) ? $" ({minDate.Value:yyyy-MM-dd} to {maxDate.Value:yyyy-MM-dd})" : "";
-        log?.Invoke($"write-off: {agg.Count:N0} distinct accounts from {rawRows.Count:N0} rows{dateRangeStr}", LogKind.Ok);
+        log?.Invoke($"write-off: {agg.Count:N0} distinct {runType.Noun()} from {rawRows.Count:N0} rows{dateRangeStr}", LogKind.Ok);
 
         return (agg, acctSet);
     }
@@ -475,8 +501,7 @@ public class DataLoaders
 
         // hoisted: resolving these per row would repeat the dictionary lookups for
         // every line of what is the largest file in a set
-        string acctCol = columnMap?.Resolve("LoanAccountNumber") ?? "LoanAccountNumber";
-        string txnCol = columnMap?.Resolve("TransactionNumber") ?? "TransactionNumber";
+        string idCol = columnMap?.Resolve("ClientNumber") ?? "ClientNumber";
         string[] bucketCols = (columnMap?.ResolveAll("AgingBuckets") ?? Array.Empty<string>()).ToArray();
 
         // Not a warning: with nothing selected every row sums to zero, check 1 still
@@ -490,19 +515,18 @@ public class DataLoaders
                 "exposure to sum. Choose at least one aging column for this file and run it again.");
         }
 
-        // An account number that is also summed as a bucket would silently become
-        // the exposure - and account numbers are numeric here, so it would parse
+        // A customer number that is also summed as a bucket would silently become
+        // the exposure - and these identifiers are numeric, so it would parse
         // cleanly into a large, plausible, wrong figure.
-        string[] keyCols = bucketCols.Where(c => c == acctCol || c == txnCol).ToArray();
+        string[] keyCols = bucketCols.Where(c => c == idCol).ToArray();
         if (keyCols.Length > 0)
         {
             throw new InvalidOperationException(
-                $"{Path.GetFileName(path)}: {string.Join(", ", keyCols)} is mapped both as part of the " +
+                $"{Path.GetFileName(path)}: {string.Join(", ", keyCols)} is mapped both as the " +
                 "join key and as an aging bucket. Pick different columns and run it again.");
         }
 
-        CsvGuards.RequireColumn(csv, hasHeaders, acctCol, $"{label} account number", path);
-        CsvGuards.RequireColumn(csv, hasHeaders, txnCol, $"{label} transaction number", path);
+        CsvGuards.RequireColumn(csv, hasHeaders, idCol, $"{label} customer number", path);
 
         // every bucket, not just the first: one the file has lost would otherwise
         // contribute zero and understate the exposure without a word
@@ -516,11 +540,8 @@ public class DataLoaders
         {
             res.TotalRows++;
 
-            string acct = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, acctCol));
-            if (string.IsNullOrEmpty(acct)) continue;
-
-            string txn = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, txnCol));
-            string key = AccountUtils.CompositeKey(acct, txn);
+            string key = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, idCol));
+            if (string.IsNullOrEmpty(key)) continue;
 
             res.AccountNumbers.Add(key);
 
@@ -541,7 +562,7 @@ public class DataLoaders
             res.AmountsPerAccount[key] = res.AmountsPerAccount.GetValueOrDefault(key, 0.0) + rowTotal;
         }
 
-        CsvGuards.RequireAnyAccounts(res.TotalRows, res.AccountNumbers.Count, acctCol, path);
+        CsvGuards.RequireAnyAccounts(res.TotalRows, res.AccountNumbers.Count, idCol, path);
 
         // named per column, because summing six buckets gives six independent
         // chances for a format this reader cannot read
@@ -554,7 +575,7 @@ public class DataLoaders
             log?.Invoke($"{label}: {negativeRows:N0} row(s) summed to a negative exposure across the selected buckets", LogKind.Warn);
 
         log?.Invoke(
-            $"{label}: {res.AccountNumbers.Count:N0} distinct account/transaction pairs from {res.TotalRows:N0} rows, " +
+            $"{label}: {res.AccountNumbers.Count:N0} distinct customers from {res.TotalRows:N0} rows, " +
             $"summing {bucketCols.Length} aging bucket(s) ({string.Join(" + ", bucketCols)})", LogKind.Ok);
 
         return res;
@@ -573,7 +594,6 @@ public class DataLoaders
     private class RawLgdRow
     {
         public string RawAccountNumber { get; set; } = string.Empty;
-        public string RawClientNumber { get; set; } = string.Empty;
         public string AccountNormalized { get; set; } = string.Empty;
         public string Bucket { get; set; } = string.Empty;
         public double? BucketN { get; set; }

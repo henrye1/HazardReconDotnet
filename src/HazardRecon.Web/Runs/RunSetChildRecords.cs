@@ -99,13 +99,6 @@ public class UntracedRowRecord
     [JsonPropertyName("account")]
     public string Account { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Empty for a lending run, and for any run stored before the column existed -
-    /// the reader treats both the same way and leaves the column out.
-    /// </summary>
-    [JsonPropertyName("transaction_number")]
-    public string TransactionNumber { get; set; } = string.Empty;
-
     [JsonPropertyName("cohort_date")]
     public string CohortDate { get; set; } = string.Empty;
 

@@ -26,16 +26,9 @@ public class ReconciliationEngine
 
         foreach (DefaultAccountRecord d in defaults)
         {
-            // The write-off file has no transaction number, so its collections are
-            // keyed by account alone. On a lending key AccountPartOf is the identity
-            // function, which is why this needs no run-type branch - and why the
-            // trade receivables case cannot silently trace 0% through write-off.
-            string acctPart = AccountUtils.AccountPartOf(d.AccountNormalized);
-
             DefaultAccountRecord rec = new()
             {
                 AccountNumber = d.AccountNumber,
-                TransactionNumber = d.TransactionNumber,
                 AccountNormalized = d.AccountNormalized,
                 CohortDate = d.CohortDate,
                 Rating = d.Rating,
@@ -45,9 +38,7 @@ public class ReconciliationEngine
                 LastOutstanding = d.LastOutstanding,
                 RecoveredAmount = d.RecoveredAmount,
                 RecoveryStatus = d.RecoveryStatus,
-                InWriteOff = woAccts.Contains(acctPart),
-                // the exposure side carries the transaction number, so it is
-                // compared at the full join grain
+                InWriteOff = woAccts.Contains(d.AccountNormalized),
                 InIFRS9 = ifrs9Accts.Contains(d.AccountNormalized)
             };
 
@@ -56,22 +47,10 @@ public class ReconciliationEngine
             else if (rec.InIFRS9) rec.TraceSource = "IFRS9";
             else rec.TraceSource = "UNTRACED";
 
-            // A write-off is recorded per account. When the default key carries a
-            // transaction as well, that amount belongs to the account and not to any
-            // one of its transactions - so it is held apart rather than repeated down
-            // every row, where summing the column would multiply the real write-off
-            // by the number of transactions.
-            if (woAmtMap.TryGetValue(acctPart, out double woVal))
-            {
-                if (rec.TransactionNumber.Length > 0) rec.AccountWriteOffTotal = woVal;
-                else rec.WriteOffAmount = woVal;
-            }
-
+            if (woAmtMap.TryGetValue(rec.AccountNormalized, out double woVal)) rec.WriteOffAmount = woVal;
             if (ifrs9Amounts.TryGetValue(rec.AccountNormalized, out double ifrs9Val)) rec.Ifrs9AmountOutstanding = ifrs9Val;
 
-            // the exposure side is keyed at the same grain as the default, so its
-            // figure is the per-row one whenever the write-off amount is not
-            if (rec.InWriteOff && rec.WriteOffAmount.HasValue) rec.TraceAmount = rec.WriteOffAmount;
+            if (rec.InWriteOff) rec.TraceAmount = rec.WriteOffAmount;
             else if (rec.InIFRS9) rec.TraceAmount = rec.Ifrs9AmountOutstanding;
 
             if (rec.TraceAmount.HasValue) rec.LossVsTraceDiff = rec.MinLgdBalance - rec.TraceAmount.Value;
@@ -243,7 +222,7 @@ public class ReconciliationEngine
 
             if (!woCache.TryGetValue(path, out var cached))
             {
-                cached = _dataLoaders.LoadWriteoff(path, log, writeOffMap);
+                cached = _dataLoaders.LoadWriteoff(path, log, writeOffMap, runType);
                 woCache[path] = cached;
             }
             return cached;
@@ -282,7 +261,6 @@ public class ReconciliationEngine
             if (!string.IsNullOrEmpty(setInfo.PdScored))
             {
                 mig = stages.Track(StageKeys.Migrations(key), () =>
-                    // woAccts is account grain, which is what detailFor expects
                     _matrixBuilder.BuildMigrationMatrix(setInfo.PdScored, woAccts, log, runType));
             }
             else
@@ -294,23 +272,13 @@ public class ReconciliationEngine
                 stages.End(StageKeys.Migrations(key), StageStatus.Warn);
             }
 
-            // two grains, deliberately: the census and the exposure intersections
-            // work at join grain, check 2 at account grain
             HashSet<string> scored = mig.ScoredAccts;
-            HashSet<string> scoredAccounts = mig.ScoredAccounts;
-
-            // projected once, here - doing it inside check 2's candidate filter
-            // would allocate per write-off row and, at 100k rows, show up in
-            // Check2ScaleTests
-            HashSet<string> defaultAccounts = defaults
-                .Select(d => AccountUtils.AccountPartOf(d.AccountNormalized))
-                .ToHashSet();
 
             DateTime? pdMin = engine.Params.TryGetValue("PdMinDate", out object? pMinObj) && DateTime.TryParse(pMinObj?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime pMin) ? pMin : null;
             DateTime? pdMax = engine.Params.TryGetValue("PdMaxDate", out object? pMaxObj) && DateTime.TryParse(pMaxObj?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime pMax) ? pMax : null;
 
             var (woNd, woSum) = stages.Track(StageKeys.Check2(key), () =>
-                ReconcileWriteoffNotDefault(scoredAccounts, woAgg, defaultAccounts, (pdMin, pdMax), mig.LastRating, log));
+                ReconcileWriteoffNotDefault(scored, woAgg, defaults.Select(d => d.AccountNormalized).ToHashSet(), (pdMin, pdMax), mig.LastRating, log));
 
             // Merge Check 2 summary properties into main summary
             summary.WoNotDefaultTotal = woSum.WoNotDefaultTotal;
@@ -371,7 +339,7 @@ public class ReconciliationEngine
             summary.UntracedFullyRecoveredAmount = fully.Sum(f => f.DefaultAmount);
 
             List<string> files = stages.Track(StageKeys.Export(key), () =>
-                CsvExporter.ExportSet(outdir, key, untraced, full, woNd, mig));
+                CsvExporter.ExportSet(outdir, key, untraced, full, woNd, mig, runType));
             summary.Files = files;
 
             results[key] = new SingleSetResult
@@ -388,7 +356,7 @@ public class ReconciliationEngine
             log($"{key} complete: {summary.UntracedTotal:N0} untraced defaults, {summary.WoInWindow:N0} in-window write-offs never defaulted", LogKind.Ok);
         }
 
-        string xlsx = stages.Track(StageKeys.Workbook, () => WorkbookExporter.ExportWorkbook(outdir, results, log));
+        string xlsx = stages.Track(StageKeys.Workbook, () => WorkbookExporter.ExportWorkbook(outdir, results, log, runType));
 
         string? analysisMd = null;
         if (analyze)
@@ -410,7 +378,7 @@ public class ReconciliationEngine
         }
 
         string html = stages.Track(StageKeys.Dashboard, () =>
-            DashboardRenderer.RenderDashboardAndSave(outdir, results, analysisMd, log));
+            DashboardRenderer.RenderDashboardAndSave(outdir, results, analysisMd, log, runType));
 
         string? memo = null;
         if (!string.IsNullOrEmpty(analysisMd))

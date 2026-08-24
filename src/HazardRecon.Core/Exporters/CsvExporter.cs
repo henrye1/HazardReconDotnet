@@ -16,14 +16,16 @@ public class CsvExporter
         List<DefaultAccountRecord> untraced,
         List<DefaultAccountRecord> full,
         List<WriteOffNotDefaultRecord> woNd,
-        MigrationMatrixResult mig)
+        MigrationMatrixResult mig,
+        EngineRunType runType = EngineRunType.Lending)
     {
         List<string> files = new();
 
-        // Taken from the rows rather than from a run-type flag, so the header can
-        // never disagree with what is written under it. Only a receivables book has
-        // a transaction number, and there it is on every row.
-        bool withTransaction = full.Any(f => f.TransactionNumber.Length > 0);
+        // A receivables run is reconciled per customer, so every report labels its
+        // identifier column accordingly rather than saying "account" over a column
+        // of customer numbers.
+        bool byCustomer = runType == EngineRunType.TradeReceivables;
+        string idHeader = byCustomer ? "ClientNumber" : "AccountNumber";
 
         // 1. untraced_defaults
         if (untraced.Count > 0)
@@ -32,17 +34,14 @@ public class CsvExporter
             using var writer = new StreamWriter(path);
             using var csv = new CsvWriter(writer, CsvConfig);
 
-            // Written field by field rather than through WriteHeader<T>(): adding a
-            // property to the record type would put the column into the lending file
-            // too, and a derived type would depend on CsvHelper's base-then-derived
-            // property order.
-            WriteFields(csv, "AccountNumber", withTransaction ? "TransactionNumber" : null,
+            // Written field by field rather than through WriteHeader<T>(), because the
+            // identifier column's name depends on the run type.
+            WriteFields(csv, idHeader,
                 "CohortDate", "Rating", "DefaultAmount", "LastOutstanding", "RecoveredAmount", "RecoveryStatus");
 
             foreach (DefaultAccountRecord u in untraced.OrderByDescending(x => x.DefaultAmount))
             {
                 csv.WriteField(u.AccountNumber);
-                if (withTransaction) csv.WriteField(u.TransactionNumber);
                 csv.WriteField(u.CohortDate);
                 csv.WriteField(u.Rating);
                 csv.WriteField(u.DefaultAmount);
@@ -62,40 +61,21 @@ public class CsvExporter
             using var writer = new StreamWriter(path);
             using var csv = new CsvWriter(writer, CsvConfig);
 
-            // For a receivables book the write-off column is replaced rather than
-            // added to: its amount is per account, so there is no per-transaction
-            // figure to put in it. The account total goes in its own column, written
-            // once per account, so the column still sums to the real write-off.
             WriteFields(csv,
-                "AccountNumber", withTransaction ? "TransactionNumber" : null,
-                "CohortDate", "Rating", "DefaultAmount", "TraceSource",
-                withTransaction ? "AccountWriteOffTotal" : "WriteOffAmount",
-                withTransaction ? "AgeAnalysisAmount" : "IFRS9AmountOutstanding",
+                idHeader, "CohortDate", "Rating", "DefaultAmount", "TraceSource", "WriteOffAmount",
+                // the exposure file is an age analysis for a receivables run, so the
+                // column is named for what it actually holds
+                byCustomer ? "AgeAnalysisAmount" : "IFRS9AmountOutstanding",
                 "MinLgdBalance", "TraceAmount", "LossVsTraceDiff");
-
-            HashSet<string> writeOffSeen = new();
 
             foreach (DefaultAccountRecord f in full)
             {
                 csv.WriteField(f.AccountNumber);
-                if (withTransaction) csv.WriteField(f.TransactionNumber);
                 csv.WriteField(f.CohortDate);
                 csv.WriteField(f.Rating);
                 csv.WriteField(f.DefaultAmount);
                 csv.WriteField(f.TraceSource);
-
-                if (withTransaction)
-                {
-                    // once per account: repeated down every transaction, anyone
-                    // totalling the column would get a multiple of the real figure
-                    bool first = f.AccountWriteOffTotal.HasValue && writeOffSeen.Add(f.AccountNumber);
-                    csv.WriteField(first ? f.AccountWriteOffTotal : null);
-                }
-                else
-                {
-                    csv.WriteField(f.WriteOffAmount);
-                }
-
+                csv.WriteField(f.WriteOffAmount);
                 csv.WriteField(f.Ifrs9AmountOutstanding);
                 csv.WriteField(f.MinLgdBalance);
                 csv.WriteField(f.TraceAmount);
@@ -113,7 +93,27 @@ public class CsvExporter
             using var writer = new StreamWriter(path);
             using var csv = new CsvWriter(writer, CsvConfig);
 
-            csv.WriteRecords(woNd);
+            // Not WriteRecords(woNd): its header would come from the model's property
+            // order, and this file's identifier is a customer number for a
+            // receivables run - the same column, differently named.
+            WriteFields(csv, idHeader, "CustomerId", "WriteOffAmount", "FirstWriteOffDate",
+                "LastWriteOffDate", "WriteOffVsScoringWindow", "LastScoredDate", "LastBucketRating",
+                "ScoringWindow");
+
+            foreach (WriteOffNotDefaultRecord w in woNd)
+            {
+                csv.WriteField(w.AccountNumber);
+                csv.WriteField(w.CustomerId);
+                csv.WriteField(w.WriteOffAmount);
+                csv.WriteField(w.FirstWriteOffDate);
+                csv.WriteField(w.LastWriteOffDate);
+                csv.WriteField(w.WriteOffVsScoringWindow);
+                csv.WriteField(w.LastScoredDate);
+                csv.WriteField(w.LastBucketRating);
+                csv.WriteField(w.ScoringWindow);
+                csv.NextRecord();
+            }
+
             files.Add(Path.GetFileName(path));
         }
 

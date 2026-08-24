@@ -1379,9 +1379,9 @@ async function scenarioDB() {
 }
 
 
-/* An age analysis discovery response: two key fields picked by header match, and
-   the aging buckets left unmapped, which is what the server sends because the
-   buckets are never guessed. */
+/* An age analysis discovery response: the customer number resolved, and the aging
+   buckets left unmapped, which is what the server sends because which buckets count
+   as defaulted is never guessed. An age analysis carries no account number. */
 const AGE_ANALYSIS_FIX = {
   run_id: "RID-AGE",
   inventory: { root: "r", sets: [{ key: "K", label: "L" }] },
@@ -1390,11 +1390,10 @@ const AGE_ANALYSIS_FIX = {
     key: "K",
     exposure: {
       has_headers: true,
-      headers: ["Acct", "Txn", "Current", "60 Days", "90 Days"],
-      samples: [["A1", "T1", "10", "40", "60"]],
+      headers: ["Client", "Current", "60 Days", "90 Days"],
+      samples: [["C1", "10", "40", "60"]],
       fields: [
-        { field: "LoanAccountNumber", note: "", multiple: false, column: "Acct", columns: ["Acct"], confidence: 1, source: "header_match" },
-        { field: "TransactionNumber", note: "", multiple: false, column: "Txn", columns: ["Txn"], confidence: 1, source: "header_match" },
+        { field: "ClientNumber", note: "", multiple: false, column: "Client", columns: ["Client"], confidence: null, source: "saved" },
         { field: "AgingBuckets", note: "", multiple: true, column: null, columns: [], confidence: null, source: "unmapped" },
       ],
     },
@@ -1436,10 +1435,10 @@ async function scenarioTR() {
   // now the mapping step for that file
   h.ctx.showMapping(AGE_ANALYSIS_FIX);
 
-  const bucketRow = mapRow(h, 0, 2);
+  const bucketRow = mapRow(h, 0, 1);
   const bar = bucketRow.children[1].children[0];
 
-  check("the buckets are offered as toggles, one per column", bar.children.length === 5,
+  check("the buckets are offered as toggles, one per column", bar.children.length === 4,
     `buttons=${bar.children.length}`);
   check("none is on to begin with",
     bar.children.every(b => !b.classList.contains("on")));
@@ -1450,23 +1449,23 @@ async function scenarioTR() {
   check("and says so", /aging bucket/.test(h.$get("#map-gate").textContent),
     `gate='${h.$get("#map-gate").textContent}'`);
 
-  // "60 Days" and "90 Days" are columns 3 and 4
-  mapRow(h, 0, 2).children[1].children[0].children[3]._fire("click");
-  mapRow(h, 0, 2).children[1].children[0].children[4]._fire("click");
+  // "60 Days" and "90 Days" are columns 2 and 3
+  mapRow(h, 0, 1).children[1].children[0].children[2]._fire("click");
+  mapRow(h, 0, 1).children[1].children[0].children[3]._fire("click");
 
   check("confirm opens once a bucket is chosen", h.$get("#btn-confirm-map").disabled === false);
   check("the summary names what is summed",
-    /60 Days \+ 90 Days/.test(mapRow(h, 0, 2).children[1].children[1].textContent),
-    mapRow(h, 0, 2).children[1].children[1].textContent);
+    /60 Days \+ 90 Days/.test(mapRow(h, 0, 1).children[1].children[1].textContent),
+    mapRow(h, 0, 1).children[1].children[1].textContent);
   check("the sample shows the summed value for the first row",
-    /100/.test(mapRow(h, 0, 2).children[2].textContent),
-    mapRow(h, 0, 2).children[2].textContent);
+    /100/.test(mapRow(h, 0, 1).children[2].textContent),
+    mapRow(h, 0, 1).children[2].textContent);
 
   // clicking an on bucket takes it off again
-  mapRow(h, 0, 2).children[1].children[0].children[3]._fire("click");
-  check("a second click deselects", /^Summed: 90 Days/.test(mapRow(h, 0, 2).children[1].children[1].textContent),
-    mapRow(h, 0, 2).children[1].children[1].textContent);
-  mapRow(h, 0, 2).children[1].children[0].children[3]._fire("click");
+  mapRow(h, 0, 1).children[1].children[0].children[2]._fire("click");
+  check("a second click deselects", /^Summed: 90 Days/.test(mapRow(h, 0, 1).children[1].children[1].textContent),
+    mapRow(h, 0, 1).children[1].children[1].textContent);
+  mapRow(h, 0, 1).children[1].children[0].children[2]._fire("click");
 
   await h.ctx.confirmMapping();
 
@@ -1476,8 +1475,10 @@ async function scenarioTR() {
   check("in the order they were picked",
     sent.AgingBuckets.join() === "90 Days,60 Days" || sent.AgingBuckets.join() === "60 Days,90 Days",
     JSON.stringify(sent.AgingBuckets));
-  check("the single-valued fields are still plain strings",
-    sent.LoanAccountNumber === "Acct" && sent.TransactionNumber === "Txn", JSON.stringify(sent));
+  check("the single-valued field is still a plain string",
+    sent.ClientNumber === "Client", JSON.stringify(sent));
+  check("and no account number is sent for an age analysis",
+    sent.LoanAccountNumber === undefined, JSON.stringify(sent));
 }
 
 /* ---------------- TRH: the header toggle moves a bucket selection ---------------- */
@@ -1490,16 +1491,16 @@ async function scenarioTRH() {
   h.$get("#rt-trade")._fire("click");
   h.ctx.showMapping(AGE_ANALYSIS_FIX);
 
-  // pick "Current" (2) and "90 Days" (4)
-  mapRow(h, 0, 2).children[1].children[0].children[2]._fire("click");
-  mapRow(h, 0, 2).children[1].children[0].children[4]._fire("click");
+  // pick "Current" (1) and "90 Days" (3)
+  mapRow(h, 0, 1).children[1].children[0].children[1]._fire("click");
+  mapRow(h, 0, 1).children[1].children[0].children[3]._fire("click");
 
-  // now say row one was data after all: the columns become positions 0..4
+  // now say row one was data after all: the columns become positions 0..3
   const card = h.$get("#map-files").children[0];
   card.children[1]._q["input"]._fire("change");
 
-  const summary = mapRow(h, 0, 2).children[1].children[1].textContent;
-  check("both buckets moved to their column positions", /2 \+ 4/.test(summary), summary);
+  const summary = mapRow(h, 0, 1).children[1].children[1].textContent;
+  check("both buckets moved to their column positions", /1 \+ 3/.test(summary), summary);
 }
 
 /* ---------------- Y: one step at a time, and the rail goes back ---------------- */

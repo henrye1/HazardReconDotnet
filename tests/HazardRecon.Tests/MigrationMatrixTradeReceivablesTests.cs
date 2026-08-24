@@ -23,40 +23,53 @@ public class MigrationMatrixTradeReceivablesTests : IDisposable
 
     private const string WithClient =
         "AccountNumber,ClientNumber,Category1,ReportDate,BucketRating,NextBucketRating,DeltaLambda\n" +
-        "A1,T1,Loans,2026-01-31,1,2,0.1\n" +
-        "A1,T2,Loans,2026-02-28,2,3,0.1\n";
+        "A1,C1,Loans,2026-01-31,1,2,0.1\n" +
+        "A2,C1,Loans,2026-02-28,2,3,0.1\n";
 
+    /// <summary>
+    /// The scored population has to be keyed the same way as the defaults, or Check 1
+    /// and Check 2 compare different populations and both quietly find nothing.
+    /// </summary>
     [Fact]
-    public void TestTheScoredPopulationIsHeldAtBothGrains()
+    public void TestTheScoredPopulationIsKeyedOnTheCustomer()
     {
         string path = WriteFile("pd_scored.csv", WithClient);
 
         MigrationMatrixResult result = _builder.BuildMigrationMatrix(
             path, null, null, EngineRunType.TradeReceivables);
 
-        // two transactions at join grain...
-        Assert.Equal(2, result.ScoredAccts.Count);
-        // ...on one account, which is what check 2 compares with the write-off file
-        Assert.Equal(new[] { "A1" }, result.ScoredAccounts);
+        // two rows, one customer
+        Assert.Equal(new[] { "C1" }, result.ScoredAccts);
+        Assert.Equal(1, result.ScoredDistinct);
+    }
+
+    [Fact]
+    public void TestALendingRunKeepsAccountKeys()
+    {
+        string path = WriteFile("pd_scored.csv", WithClient);
+
+        MigrationMatrixResult result = _builder.BuildMigrationMatrix(path);
+
+        Assert.Equal(new[] { "A1", "A2" }, result.ScoredAccts.Order());
     }
 
     /// <summary>
-    /// LastRating is keyed by account even for trade receivables, because its only
-    /// consumer is check 2. Keyed composite it would never be found, and every
-    /// write-off exception would silently report no last-seen bucket - which then
-    /// makes the workbook assert a bucket-4 concentration from an empty dictionary.
+    /// LastRating feeds the bucket-4 concentration figure in the workbook and the
+    /// dashboard. It is looked up by the write-off population, so it must be keyed
+    /// the same way - keyed differently it silently returns nothing and the report
+    /// then asserts a figure it never had.
     /// </summary>
     [Fact]
-    public void TestLastRatingIsKeyedByAccountNotByTheJoinKey()
+    public void TestLastRatingIsFoundByTheSameKeyTheWriteOffUses()
     {
         string path = WriteFile("pd_scored.csv", WithClient);
 
         MigrationMatrixResult result = _builder.BuildMigrationMatrix(
-            path, new HashSet<string> { "A1" }, null, EngineRunType.TradeReceivables);
+            path, new HashSet<string> { "C1" }, null, EngineRunType.TradeReceivables);
 
-        Assert.True(result.LastRating.ContainsKey("A1"));
+        Assert.True(result.LastRating.ContainsKey("C1"));
         // the later report date wins, as it does for lending
-        Assert.Equal("2026-02-28", result.LastRating["A1"].Date);
+        Assert.Equal("2026-02-28", result.LastRating["C1"].Date);
     }
 
     [Fact]
@@ -73,23 +86,12 @@ public class MigrationMatrixTradeReceivablesTests : IDisposable
         Assert.Contains("ClientNumber", ex.Message);
     }
 
-    [Fact]
-    public void TestALendingRunKeepsAccountOnlyKeys()
-    {
-        string path = WriteFile("pd_scored.csv", WithClient);
-
-        MigrationMatrixResult result = _builder.BuildMigrationMatrix(path);
-
-        Assert.Equal(new[] { "A1" }, result.ScoredAccts);
-        Assert.Equal(new[] { "A1" }, result.ScoredAccounts);
-    }
-
     /// <summary>
-    /// The matrix itself is keyed by (year, month, from, to), not by account, so
-    /// the composite key must not change a single cell.
+    /// The matrix is keyed by (year, month, from, to), not by account, so which
+    /// column the rows are identified by must not move a single cell.
     /// </summary>
     [Fact]
-    public void TestTheMatrixCellsAreUnaffectedByTheKeyGrain()
+    public void TestTheMatrixCellsAreUnaffectedByTheKeyColumn()
     {
         string path = WriteFile("pd_scored.csv", WithClient);
 

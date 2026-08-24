@@ -1,4 +1,3 @@
-using HazardRecon.Core.Helpers;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using Xunit;
@@ -22,50 +21,65 @@ public class DataLoadersAgeAnalysisTests : IDisposable
         return path;
     }
 
-    private const string Headers = "Acct,Txn,Current,30 Days,60 Days,90 Days\n";
+    /// <summary>An age analysis carries a customer number and the aging columns - nothing else.</summary>
+    private const string Headers = "Client,Current,30 Days,60 Days,90 Days\n";
 
     /// <summary>The mapping a user would confirm on the Map-columns step.</summary>
     private static ColumnMap Map(params string[] buckets) =>
         new(true, new Dictionary<string, IReadOnlyList<string>>
         {
-            ["LoanAccountNumber"] = new[] { "Acct" },
-            ["TransactionNumber"] = new[] { "Txn" },
+            ["ClientNumber"] = new[] { "Client" },
             ["AgingBuckets"] = buckets
         });
 
     [Fact]
     public void TestOnlyTheSelectedBucketsAreSummed()
     {
-        string path = WriteFile(Headers + "A1,T1,100,200,300,400\n");
+        string path = WriteFile(Headers + "C1,100,200,300,400\n");
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age", null, Map("60 Days", "90 Days"));
 
         // Current and 30 Days are deliberately not counted - the selection is the
         // user's definition of which buckets are in default
-        Assert.Equal(700.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
+        Assert.Equal(700.0, res.AmountsPerAccount["C1"]);
     }
 
     [Fact]
-    public void TestTheKeyIsAccountAndTransaction()
+    public void TestTheKeyIsTheCustomerNumber()
     {
-        string path = WriteFile(Headers + "A1,T1,10,0,0,0\nA1,T2,20,0,0,0\n");
+        string path = WriteFile(Headers + "C1,10,0,0,0\nC2,20,0,0,0\n");
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age", null, Map("Current"));
 
-        Assert.Equal(2, res.AccountNumbers.Count);
-        Assert.Equal(10.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
-        Assert.Equal(20.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T2")]);
+        Assert.Equal(new[] { "C1", "C2" }, res.AccountNumbers.Order());
+        Assert.Equal(10.0, res.AmountsPerAccount["C1"]);
+        Assert.Equal(20.0, res.AmountsPerAccount["C2"]);
     }
 
+    /// <summary>
+    /// An age analysis may carry more than one row for a customer, and both belong
+    /// to the same debt - so they add rather than overwrite.
+    /// </summary>
     [Fact]
-    public void TestTwoRowsForOneTransactionAccumulate()
+    public void TestTwoRowsForOneCustomerAccumulate()
     {
-        string path = WriteFile(Headers + "A1,T1,10,0,0,0\nA1,T1,15,0,0,0\n");
+        string path = WriteFile(Headers + "C1,10,0,0,0\nC1,15,0,0,0\n");
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age", null, Map("Current"));
 
         Assert.Single(res.AccountNumbers);
-        Assert.Equal(25.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
+        Assert.Equal(25.0, res.AmountsPerAccount["C1"]);
+    }
+
+    [Fact]
+    public void TestTheCustomerNumberIsNormalised()
+    {
+        // the same float-mangling that puts ".0" on an account number
+        string path = WriteFile(Headers + "606323.0,100,0,0,0\n");
+
+        SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age", null, Map("Current"));
+
+        Assert.Equal(100.0, res.AmountsPerAccount["606323"]);
     }
 
     /// <summary>
@@ -75,34 +89,34 @@ public class DataLoadersAgeAnalysisTests : IDisposable
     [Fact]
     public void TestSpaceSeparatedThousandsAreRead()
     {
-        string path = WriteFile(Headers + "A1,T1,1 234.56,0,0,0\n");
+        string path = WriteFile(Headers + "C1,1 234.56,0,0,0\n");
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age", null, Map("Current"));
 
-        Assert.Equal(1234.56, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
+        Assert.Equal(1234.56, res.AmountsPerAccount["C1"]);
     }
 
     [Fact]
     public void TestBlankBucketCellsCountAsZeroRatherThanFailing()
     {
-        string path = WriteFile(Headers + "A1,T1,,,300,\n");
+        string path = WriteFile(Headers + "C1,,,300,\n");
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age", null,
             Map("Current", "30 Days", "60 Days", "90 Days"));
 
-        Assert.Equal(300.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
+        Assert.Equal(300.0, res.AmountsPerAccount["C1"]);
     }
 
     [Fact]
     public void TestAnUnreadableBucketValueIsReportedPerColumn()
     {
-        string path = WriteFile(Headers + "A1,T1,n/a,50,0,0\n");
+        string path = WriteFile(Headers + "C1,n/a,50,0,0\n");
         List<string> warnings = new();
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age",
             (m, k) => { if (k == LogKind.Warn) warnings.Add(m); }, Map("Current", "30 Days"));
 
-        Assert.Equal(50.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
+        Assert.Equal(50.0, res.AmountsPerAccount["C1"]);
         // named, so it is clear which of several summed columns was unreadable
         Assert.Contains(warnings, w => w.Contains("Current") && w.Contains("unreadable"));
     }
@@ -112,13 +126,13 @@ public class DataLoadersAgeAnalysisTests : IDisposable
     {
         // "(50.00)" is a credit in accounting notation, and NumberStyles.Any reads
         // it as -50, which reduces the defaulted exposure
-        string path = WriteFile(Headers + "A1,T1,(50.00),0,0,0\n");
+        string path = WriteFile(Headers + "C1,(50.00),0,0,0\n");
         List<string> warnings = new();
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age",
             (m, k) => { if (k == LogKind.Warn) warnings.Add(m); }, Map("Current"));
 
-        Assert.Equal(-50.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
+        Assert.Equal(-50.0, res.AmountsPerAccount["C1"]);
         Assert.Contains(warnings, w => w.Contains("negative"));
     }
 
@@ -129,11 +143,10 @@ public class DataLoadersAgeAnalysisTests : IDisposable
     [Fact]
     public void TestNoSelectedBucketsRefusesTheRun()
     {
-        string path = WriteFile(Headers + "A1,T1,100,0,0,0\n");
+        string path = WriteFile(Headers + "C1,100,0,0,0\n");
         ColumnMap map = new(true, new Dictionary<string, IReadOnlyList<string>>
         {
-            ["LoanAccountNumber"] = new[] { "Acct" },
-            ["TransactionNumber"] = new[] { "Txn" },
+            ["ClientNumber"] = new[] { "Client" },
             ["AgingBuckets"] = Array.Empty<string>()
         });
 
@@ -144,23 +157,23 @@ public class DataLoadersAgeAnalysisTests : IDisposable
     }
 
     [Fact]
-    public void TestABucketThatIsAlsoAKeyColumnRefusesTheRun()
+    public void TestABucketThatIsAlsoTheKeyColumnRefusesTheRun()
     {
-        string path = WriteFile(Headers + "A1,T1,100,0,0,0\n");
+        string path = WriteFile(Headers + "C1,100,0,0,0\n");
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
-            _loaders.LoadAgeAnalysis(path, "age", null, Map("Acct", "Current")));
+            _loaders.LoadAgeAnalysis(path, "age", null, Map("Client", "Current")));
 
-        // account numbers are numeric here, so this would otherwise parse cleanly
+        // customer numbers are numeric here, so this would otherwise parse cleanly
         // into a large and completely wrong exposure
-        Assert.Contains("Acct", ex.Message);
+        Assert.Contains("Client", ex.Message);
         Assert.Contains("join key", ex.Message);
     }
 
     [Fact]
     public void TestAMissingBucketColumnRefusesTheRun()
     {
-        string path = WriteFile(Headers + "A1,T1,100,0,0,0\n");
+        string path = WriteFile(Headers + "C1,100,0,0,0\n");
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
             _loaders.LoadAgeAnalysis(path, "age", null, Map("Current", "120 Days")));
@@ -170,26 +183,25 @@ public class DataLoadersAgeAnalysisTests : IDisposable
     }
 
     [Fact]
-    public void TestAMissingTransactionColumnRefusesTheRun()
+    public void TestAMissingCustomerColumnRefusesTheRun()
     {
-        string path = WriteFile("Acct,Current\nA1,100\n");
+        string path = WriteFile("Cust,Current\nC1,100\n");
         ColumnMap map = new(true, new Dictionary<string, IReadOnlyList<string>>
         {
-            ["LoanAccountNumber"] = new[] { "Acct" },
-            ["TransactionNumber"] = new[] { "Txn" },
+            ["ClientNumber"] = new[] { "Client" },
             ["AgingBuckets"] = new[] { "Current" }
         });
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
             _loaders.LoadAgeAnalysis(path, "age", null, map));
 
-        Assert.Contains("transaction number", ex.Message);
+        Assert.Contains("customer number", ex.Message);
     }
 
     [Fact]
-    public void TestARowsWorthOfBlankAccountsStillRefuses()
+    public void TestARowsWorthOfBlankKeysStillRefuses()
     {
-        string path = WriteFile(Headers + ",T1,100,0,0,0\n");
+        string path = WriteFile(Headers + ",100,0,0,0\n");
 
         Assert.Throws<InvalidOperationException>(() =>
             _loaders.LoadAgeAnalysis(path, "age", null, Map("Current")));
@@ -198,17 +210,16 @@ public class DataLoadersAgeAnalysisTests : IDisposable
     [Fact]
     public void TestAHeaderlessFileIsReadByColumnPosition()
     {
-        string path = WriteFile("A1,T1,100,200\n");
+        string path = WriteFile("C1,100,200\n");
         ColumnMap map = new(false, new Dictionary<string, IReadOnlyList<string>>
         {
-            ["LoanAccountNumber"] = new[] { "0" },
-            ["TransactionNumber"] = new[] { "1" },
-            ["AgingBuckets"] = new[] { "2", "3" }
+            ["ClientNumber"] = new[] { "0" },
+            ["AgingBuckets"] = new[] { "1", "2" }
         });
 
         SourceAccountsResult res = _loaders.LoadAgeAnalysis(path, "age", null, map);
 
-        Assert.Equal(300.0, res.AmountsPerAccount[AccountUtils.CompositeKey("A1", "T1")]);
+        Assert.Equal(300.0, res.AmountsPerAccount["C1"]);
     }
 
     [Fact]

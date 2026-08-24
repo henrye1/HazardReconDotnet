@@ -528,6 +528,12 @@ let RUN_TYPE = "lending";
    client has not heard of falls back rather than being shown raw. */
 const RUN_TYPE_LABEL = { lending: "Lending", trade_receivables: "Trade receivables" };
 
+/* What the detail tables call their identifier column. A receivables run is
+   reconciled per customer, so a column of customer numbers must not be headed
+   "Account". Read from RUN_TYPE, which openRun sets from the run being viewed
+   before it draws anything - so a reopened run is labelled by its own type. */
+const idHeading = () => RUN_TYPE === "trade_receivables" ? "Client" : "Account";
+
 /* One function owns the button and the hint, as updateReady does for the files
    step: there is then no path where the two disagree. */
 function updateDetails() {
@@ -588,7 +594,7 @@ const EXPOSURE_KIND_BY_TYPE = {
   },
   trade_receivables: {
     label: "Age analysis file", icon: "table_chart",
-    hint: "One row per transaction, with the balance across aging buckets",
+    hint: "One row per customer, with the balance across aging buckets",
   },
 };
 
@@ -625,8 +631,8 @@ const EXPOSURE_REQ_BY_TYPE = {
   },
   trade_receivables: {
     title: "Age analysis file",
-    body: "One row per transaction. Needs an account number, a transaction number, and the aging " +
-          "columns - you choose which of those count as defaulted on the next step.",
+    body: "One row per customer. Needs a customer number and the aging columns - you choose " +
+          "which of those count as defaulted on the next step.",
   },
 };
 
@@ -1909,14 +1915,8 @@ function renderSetDetail(res) {
   if (!dash.length) { $("#dash-setdetail").innerHTML = ""; return; }
 
   $("#dash-setdetail").innerHTML = dash.map(d => {
-    /* Drawn when the rows actually carry a transaction, not from the run type: a
-       run stored before there was such a column has no key for it, and this way a
-       reopened lending run is right without any run-type plumbing reaching here. */
-    const hasTxn = (d.top_untraced || []).some(u => u.transaction);
-
     const untraced = (d.top_untraced || []).map(u => `<tr>
       <td class="num" style="text-align:left">${escapeHtml(u.account)}</td>
-      ${hasTxn ? `<td>${escapeHtml(u.transaction || "")}</td>` : ""}
       <td>${escapeHtml(u.cohort_date)}</td>
       <td class="num">${escapeHtml(u.rating)}</td>
       <td class="num">${escapeHtml(u.amount)}</td></tr>`).join("");
@@ -1950,8 +1950,7 @@ function renderSetDetail(res) {
         </div>
         <div class="cardbody" style="display:grid;gap:24px">
           ${block("Top untraced defaults", "",
-            `<th>Account</th>${hasTxn ? "<th>Transaction</th>" : ""}` +
-            `<th>Cohort date</th><th class="num">Rating</th>` +
+            `<th>${idHeading()}</th><th>Cohort date</th><th class="num">Rating</th>` +
             `<th class="num">Default amount</th>`, untraced)}
           <div class="dashrow">
             ${buckets ? `<div class="grow1" style="display:grid;gap:10px">
@@ -1963,7 +1962,7 @@ function renderSetDetail(res) {
             </div>` : ""}
             ${exceptions ? `<div class="grow2" style="display:grid;gap:10px">
               ${block("Write-offs not defaulted — top exceptions", "",
-                `<th>Account</th><th class="num">Write-off amount</th><th>Last write-off date</th>` +
+                `<th>${idHeading()}</th><th class="num">Write-off amount</th><th>Last write-off date</th>` +
                 `<th>Window status</th><th class="num">Last bucket</th>`, exceptions)}
             </div>` : ""}
           </div>

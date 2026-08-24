@@ -74,8 +74,8 @@ public static class RunSetResultMapper
         rec.UntracedRows = set.Untraced.Take(DashboardPayload.TopUntracedRows)
             .Select((u, i) => new UntracedRowRecord
             {
-                Account = u.AccountNumber, TransactionNumber = u.TransactionNumber,
-                CohortDate = u.CohortDate, Rating = u.Rating, Amount = u.DefaultAmount, Position = i
+                Account = u.AccountNumber, CohortDate = u.CohortDate, Rating = u.Rating,
+                Amount = u.DefaultAmount, Position = i
             })
             .ToList();
         rec.WoExceptionRows = WoExceptionRows(set.WoNd);

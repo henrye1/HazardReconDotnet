@@ -5,15 +5,14 @@ using Xunit;
 namespace HazardRecon.Tests;
 
 /// <summary>
-/// End to end over a receivables book. These are the tests that would catch the
-/// mixed-grain traps: the defaults and the scored population are keyed on
-/// (account, transaction) while the write-off file is account-only, so a missed
-/// projection shows up here as a plausible zero rather than as a crash.
+/// End to end over a receivables book. Every file in the run is keyed on the
+/// customer number, and these are the tests that catch a file left keyed on
+/// something else - which shows up as a plausible zero rather than as an error.
 ///
 /// Its own fixture rather than an extension of SyntheticDataFixture, whose exact
 /// counts are pinned by four other suites and whose hand-computed CohortNlambda
 /// would have to be recomputed cell by cell. debug.json here carries no
-/// AccumulatedArrays, so the matrix validation reports N/A and nothing needs
+/// AccumulatedArrays, so matrix validation reports N/A and nothing needs
 /// hand-computing.
 /// </summary>
 public class ReconciliationEngineTradeReceivablesTests : IDisposable
@@ -35,35 +34,34 @@ public class ReconciliationEngineTradeReceivablesTests : IDisposable
         Directory.CreateDirectory(_setDir);
         Directory.CreateDirectory(_outDir);
 
-        // Two transactions on A1 both default; one on A2 defaults too.
+        // C1 holds two defaulted accounts - one customer, one default, summed.
+        // C2 holds one.
         File.WriteAllText(Path.Combine(_setDir, "lgd_defaults.csv"),
             "AccountNumber,ClientNumber,EventType,CohortDate,Bucket,Rating,Amount\n" +
-            "A1,T1,Lifetime,2026-05-31,0,5,100.0\n" +
-            "A1,T2,Lifetime,2026-05-31,0,5,200.0\n" +
-            "A2,T9,Lifetime,2026-05-31,0,5,300.0\n");
+            "A1,C1,Lifetime,2026-05-31,0,5,100.0\n" +
+            "A2,C1,Lifetime,2026-05-31,0,5,200.0\n" +
+            "A9,C2,Lifetime,2026-05-31,0,5,300.0\n");
 
-        // A1's two transactions are scored, and A3 is scored but never defaulted -
-        // A3 is the write-off exception check 2 should find.
+        // C1 and C2 are scored, and C3 is scored but never defaulted - C3 is the
+        // write-off exception check 2 should find.
         File.WriteAllText(Path.Combine(_setDir, "pd_scored.csv"),
             "AccountNumber,ClientNumber,Category1,ReportDate,BucketRating,NextBucketRating,DeltaLambda\n" +
-            "A1,T1,Loans,2026-02-28,1,2,0.1\n" +
-            "A1,T2,Loans,2026-02-28,2,3,0.1\n" +
-            "A3,T5,Loans,2026-02-28,4,5,0.1\n");
+            "A1,C1,Loans,2026-02-28,1,2,0.1\n" +
+            "A9,C2,Loans,2026-02-28,2,3,0.1\n" +
+            "A5,C3,Loans,2026-02-28,4,5,0.1\n");
 
-        // The bank's age analysis, in the exposure slot's canonical name. A1's two
-        // transactions and A2's one, with the balance across aging buckets.
+        // The bank's age analysis, in the exposure slot's canonical name: one row
+        // per customer, with the balance across aging buckets and no account number.
         File.WriteAllText(Path.Combine(_setDir, "IFRS9.csv"),
-            "Account,Txn,Current,30 Days,60 Days,90 Days\n" +
-            "A1,T1,10,0,40,60\n" +
-            "A1,T2,20,0,50,150\n" +
-            "A2,T9,30,0,100,200\n");
+            "Client,Current,30 Days,60 Days,90 Days\n" +
+            "C1,10,0,120,180\n" +
+            "C2,30,0,100,200\n");
 
-        // One write-off on A1, with no transaction number - it must trace BOTH of
-        // A1's defaulted transactions. And one on A3, which never defaulted.
+        // One write-off against C1, one against C3 which never defaulted.
         File.WriteAllText(Path.Combine(_setDir, "writeoff.csv"),
             "LoanAccountNumber,CustomerId,Amount,ReportDate\n" +
             "A1,C1,300,2026-02-15\n" +
-            "A3,C3,500,2026-02-20\n");
+            "A5,C3,500,2026-02-20\n");
 
         File.WriteAllText(Path.Combine(_setDir, "debug.json"),
             "{\"Parameters\":{\"PdMinDate\":\"2026-01-01\",\"PdMaxDate\":\"2026-06-30\"}}");
@@ -74,11 +72,17 @@ public class ReconciliationEngineTradeReceivablesTests : IDisposable
         _maps = new Dictionary<string, SetColumnMaps>
         {
             [Key] = new SetColumnMaps(
-                WriteOff: null,
+                // the write-off file's own column names, mapped for a receivables run
+                WriteOff: new ColumnMap(true, new Dictionary<string, string>
+                {
+                    ["LoanAccountNumber"] = "LoanAccountNumber",
+                    ["CustomerId"] = "CustomerId",
+                    ["Amount"] = "Amount",
+                    ["ReportDate"] = "ReportDate"
+                }),
                 Exposure: new ColumnMap(true, new Dictionary<string, IReadOnlyList<string>>
                 {
-                    ["LoanAccountNumber"] = new[] { "Account" },
-                    ["TransactionNumber"] = new[] { "Txn" },
+                    ["ClientNumber"] = new[] { "Client" },
                     // the user's rule: 60 and 90 days are in default, current and
                     // 30 days are not
                     ["AgingBuckets"] = new[] { "60 Days", "90 Days" }
@@ -99,39 +103,40 @@ public class ReconciliationEngineTradeReceivablesTests : IDisposable
     }
 
     [Fact]
-    public void TestEachTransactionIsItsOwnDefault()
+    public void TestOneCustomerIsOneDefaultWithItsAmountsSummed()
     {
-        ReconciliationSummary summary = Run().Summary;
+        SingleSetResult res = Run();
 
-        // three (account, transaction) pairs, not two accounts
-        Assert.Equal(3, summary.TotalDefaults);
-        Assert.Equal(600.0, summary.TotalExposure);
+        // two customers, not three accounts
+        Assert.Equal(2, res.Summary.TotalDefaults);
+        // C1's two accounts summed, plus C2
+        Assert.Equal(600.0, res.Summary.TotalExposure);
+        Assert.Equal(300.0, res.Full.Single(f => f.AccountNumber == "C1").DefaultAmount);
     }
 
     /// <summary>
-    /// The trap: the write-off file has no transaction number, so comparing a
-    /// composite default key against it directly would trace nothing at all and
+    /// The trap: if the write-off were still keyed on the loan account number it
+    /// would share no key with the defaults, nothing would trace, and the run would
     /// report a plausible 0%.
     /// </summary>
     [Fact]
-    public void TestOneWriteOffTracesEveryTransactionOnThatAccount()
+    public void TestTheWriteOffTracesOnTheCustomerNumber()
     {
         SingleSetResult res = Run();
 
-        Assert.Equal(2, res.Summary.TracedWriteOff);
-        Assert.All(
-            res.Full.Where(f => f.AccountNumber == "A1"),
-            f => Assert.True(f.InWriteOff, $"{f.TransactionNumber} should trace through the account's write-off"));
+        Assert.Equal(1, res.Summary.TracedWriteOff);
+        DefaultAccountRecord c1 = res.Full.Single(f => f.AccountNumber == "C1");
+        Assert.True(c1.InWriteOff);
+        Assert.Equal(300.0, c1.WriteOffAmount);
     }
 
     [Fact]
-    public void TestTheAgeAnalysisTracesOnTheCompositeKey()
+    public void TestTheAgeAnalysisTracesOnTheCustomerNumber()
     {
         SingleSetResult res = Run();
 
-        // every default appears in the age analysis, at transaction grain
-        Assert.Equal(3, res.Summary.TracedIfrs9);
-        Assert.Equal(3, res.Summary.Ifrs9KeyOverlap);
+        Assert.Equal(2, res.Summary.TracedIfrs9);
+        Assert.Equal(2, res.Summary.Ifrs9KeyOverlap);
         Assert.Equal(0, res.Summary.UntracedTotal);
     }
 
@@ -140,36 +145,34 @@ public class ReconciliationEngineTradeReceivablesTests : IDisposable
     {
         SingleSetResult res = Run();
 
-        DefaultAccountRecord t1 = res.Full.Single(f => f.TransactionNumber == "T1");
-        DefaultAccountRecord t2 = res.Full.Single(f => f.TransactionNumber == "T2");
-
-        // 40 + 60, and 50 + 150 - current and 30 days are excluded
-        Assert.Equal(100.0, t1.Ifrs9AmountOutstanding);
-        Assert.Equal(200.0, t2.Ifrs9AmountOutstanding);
+        // 120 + 180, and 100 + 200 - current and 30 days are excluded
+        Assert.Equal(300.0, res.Full.Single(f => f.AccountNumber == "C1").Ifrs9AmountOutstanding);
+        Assert.Equal(300.0, res.Full.Single(f => f.AccountNumber == "C2").Ifrs9AmountOutstanding);
     }
 
     /// <summary>
-    /// The worst trap of all: with the scored population and the defaults left at
-    /// mismatched grains, check 2 finds nothing, and "no exceptions" is then
-    /// reported as a clean run that ties out.
+    /// The worst trap of all: with the scored population and the defaults keyed
+    /// differently, check 2 finds nothing, and "no exceptions" is then reported as a
+    /// clean run that ties out.
     /// </summary>
     [Fact]
-    public void TestCheck2StillFindsAWriteOffThatNeverDefaulted()
+    public void TestCheck2StillFindsACustomerWrittenOffButNeverDefaulted()
     {
         SingleSetResult res = Run();
 
         Assert.Equal(1, res.Summary.WoNotDefaultTotal);
         WriteOffNotDefaultRecord exception = Assert.Single(res.WoNd);
-        Assert.Equal("A3", exception.AccountNumber);
+        Assert.Equal("C3", exception.AccountNumber);
         Assert.Equal(500.0, exception.WriteOffAmount);
 
-        // and A1, whose transactions did default, is not reported as an exception
-        Assert.DoesNotContain("A1", res.WoNd.Select(w => w.AccountNumber));
+        // and C1, which did default, is not reported as an exception
+        Assert.DoesNotContain("C1", res.WoNd.Select(w => w.AccountNumber));
     }
 
     /// <summary>
-    /// LastRating is keyed by account; if it were keyed on the join key this would
-    /// be null and the workbook would claim a bucket-4 figure it never had.
+    /// If pd_scored were left keyed on the account while the write-off moved to the
+    /// customer, this would be null and the workbook would then claim a bucket-4
+    /// figure it never had.
     /// </summary>
     [Fact]
     public void TestTheWriteOffExceptionKeepsItsLastSeenBucket()
@@ -182,18 +185,15 @@ public class ReconciliationEngineTradeReceivablesTests : IDisposable
     }
 
     [Fact]
-    public void TestTheCensusReportsBothGrainsCoherently()
+    public void TestEveryPopulationIsCountedPerCustomer()
     {
         ReconciliationSummary summary = Run().Summary;
 
-        // scored is at join grain, write-off at account grain - each counting the
-        // thing its own file actually holds
-        Assert.Equal(3, summary.ScoredDistinct);
-        Assert.Equal(2, summary.WriteOffDistinct);
-        Assert.Equal(3, summary.DefaultsDistinct);
-        // A1 and A3 are both scored and written off - counted once each, at account
-        // grain, not once per scored transaction
-        Assert.Equal(2, summary.ScoredInWriteOff);
+        Assert.Equal(3, summary.ScoredDistinct);      // C1, C2, C3
+        Assert.Equal(2, summary.WriteOffDistinct);    // C1, C3
+        Assert.Equal(2, summary.DefaultsDistinct);    // C1, C2
+        Assert.Equal(2, summary.Ifrs9Distinct);       // C1, C2
+        Assert.Equal(2, summary.ScoredInWriteOff);    // C1 and C3
     }
 
     [Fact]

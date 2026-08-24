@@ -471,7 +471,7 @@ public class UploadEndpointTests : IClassFixture<UploadEndpointTests.AuthedFacto
         JsonElement fields = doc.RootElement.GetProperty("mapping")[0].GetProperty("exposure").GetProperty("fields");
 
         string[] offered = fields.EnumerateArray().Select(f => f.GetProperty("field").GetString()!).ToArray();
-        Assert.Equal(new[] { "LoanAccountNumber", "TransactionNumber", "AgingBuckets" }, offered);
+        Assert.Equal(new[] { "ClientNumber", "AgingBuckets" }, offered);
 
         // the buckets are the one field that takes several columns, and the one the
         // AI is never asked about

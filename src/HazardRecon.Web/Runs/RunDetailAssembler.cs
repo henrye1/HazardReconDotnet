@@ -122,8 +122,8 @@ public static class RunDetailAssembler
             }).ToList(),
             top_untraced = (r.UntracedRows ?? new()).OrderBy(x => x.Position).Select(x => new
             {
-                account = x.Account, transaction = x.TransactionNumber,
-                cohort_date = x.CohortDate, rating = x.Rating, amount = AccountUtils.Money(x.Amount)
+                account = x.Account, cohort_date = x.CohortDate, rating = x.Rating,
+                amount = AccountUtils.Money(x.Amount)
             }).ToList(),
             wo_exceptions = (r.WoExceptionRows ?? new()).OrderBy(x => x.Position).Select(x => new
             {

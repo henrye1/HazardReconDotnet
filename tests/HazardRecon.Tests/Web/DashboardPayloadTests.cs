@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using HazardRecon.Core.Helpers;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
@@ -185,18 +184,15 @@ public class DashboardPayloadTests : IClassFixture<SyntheticDataFixture>
         Assert.True(d.WoExceptions.Count <= DashboardPayload.TopWoExceptionRows);
         // every exception listed is one inside the scoring window
         Assert.All(d.WoExceptions, w => Assert.Equal("IN WINDOW", w.Window));
-
-        // a lending run has no transaction to show, and the table hides the column
-        // rather than printing a row of blanks
-        Assert.All(d.TopUntraced, u => Assert.Equal("", u.Transaction));
     }
 
     /// <summary>
-    /// The payload the detail screen draws from carries the transaction, or a
-    /// receivables run's rows differ only by amount.
+    /// One identifier column, whatever the run type - a receivables run puts the
+    /// customer number in it, and the detail table labels the column rather than
+    /// carrying a second value.
     /// </summary>
     [Fact]
-    public void TestAReceivablesRunCarriesTheTransactionIntoThePayload()
+    public void TestTheIdentifierIsWhateverTheRunIsKeyedOn()
     {
         SingleSetResult set = new()
         {
@@ -205,8 +201,7 @@ public class DashboardPayloadTests : IClassFixture<SyntheticDataFixture>
             {
                 new()
                 {
-                    AccountNumber = "A1", TransactionNumber = "T7",
-                    AccountNormalized = AccountUtils.CompositeKey("A1", "T7"),
+                    AccountNumber = "C7", AccountNormalized = "C7",
                     CohortDate = "2026-05-31", Rating = "5", DefaultAmount = 100
                 }
             }
@@ -214,7 +209,7 @@ public class DashboardPayloadTests : IClassFixture<SyntheticDataFixture>
 
         DashboardSet d = DashboardPayload.Build("TR", set);
 
-        Assert.Equal("T7", Assert.Single(d.TopUntraced).Transaction);
+        Assert.Equal("C7", Assert.Single(d.TopUntraced).Account);
     }
 
     [Fact]

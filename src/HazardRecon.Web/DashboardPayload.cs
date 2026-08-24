@@ -15,8 +15,6 @@ public record LastBucketRow(
 /// <summary>A default that could not be traced, for the detail table.</summary>
 public record UntracedRow(
     [property: JsonPropertyName("account")] string Account,
-    /// <summary>Empty for a lending run, which has no second key part.</summary>
-    [property: JsonPropertyName("transaction")] string Transaction,
     [property: JsonPropertyName("cohort_date")] string CohortDate,
     [property: JsonPropertyName("rating")] string Rating,
     [property: JsonPropertyName("amount")] string Amount);
@@ -125,7 +123,7 @@ public static class DashboardPayload
             DefaultPctOfScored = s.DefaultPctOfScored,
             LastBuckets = LastBuckets(set.WoNd),
             TopUntraced = set.Untraced.Take(TopUntracedRows).Select(u => new UntracedRow(
-                u.AccountNumber, u.TransactionNumber, u.CohortDate, u.Rating,
+                u.AccountNumber, u.CohortDate, u.Rating,
                 AccountUtils.Money(u.DefaultAmount))).ToList(),
             WoExceptions = WoExceptions(set.WoNd),
         };

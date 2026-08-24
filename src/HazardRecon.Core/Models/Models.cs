@@ -20,7 +20,7 @@ public static class EngineRunTypeGrain
     /// drift between the four places that say it.
     /// </summary>
     public static string Noun(this EngineRunType runType) =>
-        runType == EngineRunType.TradeReceivables ? "account/transaction pairs" : "accounts";
+        runType == EngineRunType.TradeReceivables ? "customers" : "accounts";
 }
 
 public class InventorySet
@@ -52,19 +52,18 @@ public class Inventory
 
 public class DefaultAccountRecord
 {
+    /// <summary>
+    /// What identifies this default: the loan account number for a lending run,
+    /// the customer number for trade receivables. The reports label the column
+    /// accordingly rather than carrying both.
+    /// </summary>
     public string AccountNumber { get; set; } = string.Empty;
 
     /// <summary>
-    /// The transaction (client) number this default belongs to, for display and
-    /// export. Empty for a lending run, which has no second key part.
-    /// </summary>
-    public string TransactionNumber { get; set; } = string.Empty;
-
-    /// <summary>
-    /// The join key. For trade receivables this is the composite built by
-    /// <see cref="Helpers.AccountUtils.CompositeKey"/>, not a bare account
-    /// number - use AccountPartOf before comparing it with anything read from
-    /// the write-off file, which has no transaction number.
+    /// The normalised join key - <see cref="AccountNumber"/> put through
+    /// <see cref="Helpers.AccountUtils.NormaliseAccount"/>. Every file in a run is
+    /// keyed at the same grain, so this compares directly against the write-off
+    /// and exposure populations whatever the run type.
     /// </summary>
     public string AccountNormalized { get; set; } = string.Empty;
     public string CohortDate { get; set; } = string.Empty;
@@ -82,15 +81,6 @@ public class DefaultAccountRecord
     public bool Traced => InWriteOff || InIFRS9;
     public string TraceSource { get; set; } = "UNTRACED";
     public double? WriteOffAmount { get; set; }
-
-    /// <summary>
-    /// The account's whole write-off, for a key that identifies a transaction
-    /// rather than an account. Kept apart from <see cref="WriteOffAmount"/>
-    /// precisely so it is never read as this row's share: the exporters write it
-    /// once per account, so the column still totals correctly.
-    /// </summary>
-    public double? AccountWriteOffTotal { get; set; }
-
     public double? Ifrs9AmountOutstanding { get; set; }
     public double? TraceAmount { get; set; }
     public double? LossVsTraceDiff { get; set; }
@@ -141,21 +131,12 @@ public class MigrationMatrixResult
     public int RowsInRange { get; set; }
     public int ScoredDistinct { get; set; }
 
-    /// <summary>The scored population at join grain - composite for trade receivables.</summary>
+    /// <summary>
+    /// The scored population, keyed the same way as everything else in the run:
+    /// account numbers for lending, customer numbers for trade receivables.
+    /// </summary>
     public HashSet<string> ScoredAccts { get; set; } = new();
 
-    /// <summary>
-    /// The same population projected to account numbers. Check 2 compares the
-    /// scored population against the write-off file, which has no transaction
-    /// number, so it needs this rather than <see cref="ScoredAccts"/>.
-    /// </summary>
-    public HashSet<string> ScoredAccounts { get; set; } = new();
-
-    /// <summary>
-    /// Keyed by **account**, not by the join key: its only consumer is check 2,
-    /// which works at account grain. Keying it composite would leave every
-    /// lookup missing and silently report no last-seen bucket for anything.
-    /// </summary>
     public Dictionary<string, (string Date, string Bucket)> LastRating { get; set; } = new();
 }
 
