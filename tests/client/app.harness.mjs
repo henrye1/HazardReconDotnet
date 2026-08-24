@@ -1829,10 +1829,92 @@ async function scenarioRD() {
   check("the type is back to lending", h.$get("#rt-lending").classList.contains("on"));
 }
 
+/* ---------------- HP: the Help nav item is a real destination ---------------- */
+async function scenarioHP() {
+  console.log("HP) Help opens its own screen instead of doing nothing");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  h.$get("#nav-help")._fire("click");
+
+  check("the help screen is shown", !h.$get("#screen-help").classList.contains("hide"));
+  check("the run list is put away", h.$get("#screen-runs").classList.contains("hide"));
+  check("the wizard is put away", h.$get("#screen-wizard").classList.contains("hide"));
+  check("the detail screen is put away", h.$get("#screen-detail").classList.contains("hide"));
+  check("Help is the active nav item", h.$get("#nav-help").classList.contains("on"));
+  check("My runs gives up the highlight", !h.$get("#nav-runs").classList.contains("on"));
+  check("New run gives up the highlight", !h.$get("#nav-new").classList.contains("on"));
+
+  // and back again, without help having left its highlight behind
+  h.$get("#nav-runs")._fire("click");
+  check("the help screen is put away again", h.$get("#screen-help").classList.contains("hide"));
+  check("Help drops the highlight", !h.$get("#nav-help").classList.contains("on"));
+  check("My runs takes it back", h.$get("#nav-runs").classList.contains("on"));
+}
+
+/* ---------------- HQ: help does not disturb work in flight ---------------- */
+async function scenarioHQ() {
+  console.log("HQ) reading help mid-wizard leaves the wizard where it was");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  h.$get("#nav-new")._fire("click");
+  h.ctx.showInventory(INVENTORY_FIX);          // wizard is now on the confirm step
+  const invBefore = h.$get("#inv-table").innerHTML;
+
+  h.$get("#nav-help")._fire("click");
+  check("the wizard is only hidden, not torn down",
+    h.$get("#inv-table").innerHTML === invBefore);
+
+  h.ctx.showScreen("wizard");
+  check("the wizard is back", !h.$get("#screen-wizard").classList.contains("hide"));
+  check("the confirm step is still the one showing", !h.$get("#step-confirm").classList.contains("hide"));
+  check("the files step is still behind it", h.$get("#step-files").classList.contains("hide"));
+  check("the discovered inventory survived", h.$get("#inv-table").innerHTML === invBefore,
+    "the inventory table was cleared");
+  check("Run is still armed", h.$get("#btn-run").disabled === false);
+}
+
+/* ---------------- HR: the quoted limits come from the server ---------------- */
+async function scenarioHR() {
+  console.log("HR) help quotes the server's upload limits, not hard-coded ones");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config"
+      ? Object.assign({}, CFG, { maxBytesPerSet: 256 * 1024 * 1024, maxFilesPerSet: 9, maxSets: 3 })
+      : [])));
+  await tick(); await tick(); await tick();
+
+  check("the set limit is the server's", h.$get("#help-max-sets").textContent === "3",
+    `got '${h.$get("#help-max-sets").textContent}'`);
+  check("the file limit is the server's", h.$get("#help-max-files").textContent === "9",
+    `got '${h.$get("#help-max-files").textContent}'`);
+  check("the size limit is the server's, in MB", h.$get("#help-max-bytes").textContent === "256 MB",
+    `got '${h.$get("#help-max-bytes").textContent}'`);
+}
+
+/* ---------------- HS: a run's detail still belongs to My runs ---------------- */
+async function scenarioHS() {
+  console.log("HS) opening a run keeps My runs highlighted, and closes help");
+  const h = bootAuth({ access_token: "tok-abc" }, (url) =>
+    Promise.resolve(jsonRes(200, url === "/api/config" ? CFG : [])));
+  await tick(); await tick(); await tick();
+
+  h.$get("#nav-help")._fire("click");
+  h.ctx.showResults(DETAIL_RESULT, []);
+
+  check("the detail screen took over", !h.$get("#screen-detail").classList.contains("hide"));
+  check("help is put away", h.$get("#screen-help").classList.contains("hide"));
+  check("My runs owns the highlight on a detail", h.$get("#nav-runs").classList.contains("on"));
+  check("Help does not keep it", !h.$get("#nav-help").classList.contains("on"));
+}
+
 for (const s of [scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF, scenarioG, scenarioH,
                  scenarioI, scenarioJ, scenarioK, scenarioL, scenarioM, scenarioN,
                  scenarioO, scenarioP, scenarioQ, scenarioR, scenarioRD, scenarioS, scenarioT,
                  scenarioU, scenarioV, scenarioVV, scenarioW, scenarioX,
-                 scenarioY, scenarioYY, scenarioTR, scenarioTRH, scenarioDR, scenarioDS, scenarioZ, scenarioDN, scenarioDNC, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL]) { await s(); console.log(""); }
+                 scenarioY, scenarioYY, scenarioTR, scenarioTRH, scenarioDR, scenarioDS, scenarioZ, scenarioDN, scenarioDNC, scenarioDA, scenarioDB, scenarioDC, scenarioDD, scenarioDE, scenarioDF, scenarioDG, scenarioDH, scenarioDL,
+                 scenarioHP, scenarioHQ, scenarioHR, scenarioHS]) { await s(); console.log(""); }
 console.log(failures === 0 ? "ALL SCENARIOS PASSED" : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -55,9 +55,9 @@
       <div class="navitem dead">
         <span class="ms-icon" style="font-size:20px">report</span>Reports
       </div>
-      <div class="navitem dead">
+      <button class="navitem" id="nav-help">
         <span class="ms-icon" style="font-size:20px">menu_book</span>Help
-      </div>
+      </button>
     </nav>
 
     <div class="sideuser">
@@ -505,6 +505,468 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============ SCREEN: help ============ -->
+    <section id="screen-help" class="hide">
+      <div class="pagehead">
+        <div class="grow">
+          <h1>Help</h1>
+          <p>What this app checks, what it needs from you, and what it gives back.</p>
+        </div>
+      </div>
+
+      <div class="wrap">
+
+        <nav class="helptoc" aria-label="Help contents">
+          <a href="#help-what">What it does</a>
+          <a href="#help-steps">A run, step by step</a>
+          <a href="#help-files">Input files</a>
+          <a href="#help-mapping">Column mapping</a>
+          <a href="#help-checks">The two checks</a>
+          <a href="#help-matrix">Migration matrix</a>
+          <a href="#help-stages">Run stages</a>
+          <a href="#help-outputs">Output files</a>
+          <a href="#help-ai">AI analysis and chat</a>
+          <a href="#help-limits">Limits, retention and privacy</a>
+          <a href="#help-trouble">When something goes wrong</a>
+        </nav>
+
+        <div class="card" id="help-what">
+          <div class="cardhead"><span>What this app does</span></div>
+          <div class="cardbody" style="display:grid;gap:12px">
+            <p class="hint" style="margin:0">The credit engine says which accounts defaulted and how they
+              moved between rating buckets. This app takes the engine's own debug output and reconciles it
+              against the two records the business actually keeps &mdash; the write-off file and the IFRS9
+              exposure file &mdash; so you can answer two questions before the numbers are signed off:</p>
+            <div class="reqs">
+              <div class="req">
+                <span class="ms-icon">rule</span>
+                <div><b>Check 1 &mdash; can every default be traced?</b>
+                  <span>A default the engine booked should show up as a write-off, or in the IFRS9
+                    population, or both. One that appears in neither is <b>untraced</b>: the model recorded
+                    a loss that has no downstream record.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">swap_horiz</span>
+                <div><b>Check 2 &mdash; the reverse: written off, never flagged?</b>
+                  <span>An account that was written off, was scored by the engine, and yet never entered
+                    the default bucket. The ones written off <i>inside</i> the scoring window are the real
+                    exceptions &mdash; the engine had the account in front of it and did not call it.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">fact_check</span>
+                <div><b>And a third, silent one: does the matrix reconcile?</b>
+                  <span>The migration matrix is rebuilt from the scored accounts and compared cell-for-cell
+                    against the engine's own accumulated arrays in <code>debug.json</code>. It either
+                    passes, or you are told which cells disagree.</span></div>
+              </div>
+            </div>
+            <p class="hint" style="margin:0">Each run can cover up to four <b>sets</b> &mdash; typically the
+              same portfolio at different reporting dates or scenario strengths &mdash; and every set is
+              checked independently, then written into one workbook and one dashboard.</p>
+          </div>
+        </div>
+
+        <div class="card" id="help-steps">
+          <div class="cardhead"><span>A run, step by step</span></div>
+          <div class="cardbody reqs">
+            <div class="req">
+              <span class="ms-icon">counter_1</span>
+              <div><b>Files</b>
+                <span>Add a set and pick its files one slot at a time. Only the exposure (IFRS9) file is
+                  compulsory; the set is named after it. Each file uploads on its own, so replacing one
+                  does not mean re-uploading the rest.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">counter_2</span>
+              <div><b>Map columns</b>
+                <span>Your headers are matched to the fields the engine needs. Anything that cannot be
+                  matched outright is guessed, and every guess can be overridden. A confirmed mapping is
+                  remembered for files with the same column signature, so the next month is one click.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">counter_3</span>
+              <div><b>Confirm</b>
+                <span>The inventory shows exactly which file was found in each role, and flags anything
+                  missing. Pick an AI model here if you want written analysis &mdash; or leave it on
+                  <i>Skip</i> and the reconciliation runs on figures alone.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">counter_4</span>
+              <div><b>Run</b>
+                <span>Progress is reported stage by stage. You can leave this screen &mdash; the run
+                  continues on the server and stays on <b>My runs</b>. The raw engine log is one click
+                  away.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">counter_5</span>
+              <div><b>Results</b>
+                <span>Summary, an interactive dashboard, the downloadable files, and the full log. From
+                  here you can ask the model questions about the run, or run it again on the same
+                  inputs.</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="help-files">
+          <div class="cardhead">
+            <span>Input files</span>
+            <span class="sub">four slots per set</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="grid" id="help-files-table">
+              <thead>
+                <tr><th>Slot</th><th>Accepts</th><th>Needed</th><th>What it is used for</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><b>Exposure (IFRS9)</b></td>
+                  <td><code>.csv</code></td>
+                  <td class="ok">Required</td>
+                  <td>The IFRS9 population for the reporting date. Check 1 traces defaults into it, and the
+                    set takes its name from this file.</td>
+                </tr>
+                <tr>
+                  <td><b>Write-off</b></td>
+                  <td><code>.csv</code></td>
+                  <td>Optional</td>
+                  <td>One row per written-off account. Without it <b>check 2 cannot run at all</b>, and
+                    check 1 can only trace through the IFRS9 flag &mdash; so expect far more untraced.</td>
+                </tr>
+                <tr>
+                  <td><b>Debug</b></td>
+                  <td><code>.zip</code>, <code>.csv</code>, <code>.json</code></td>
+                  <td class="ok">Required</td>
+                  <td>The engine's own output: <code>debug.zip</code>, or the extracted
+                    <code>lgd_defaults.csv</code> (the defaults population),
+                    <code>pd_scored.csv</code> (the scored account-months) and
+                    <code>debug.json</code>. Add extracted files separately.</td>
+                </tr>
+                <tr>
+                  <td><b>Scenario</b></td>
+                  <td><code>.json</code></td>
+                  <td>Optional</td>
+                  <td>The hazard matrix and LGD term structures the engine ran with.
+                    <code>debug.json</code> also works.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="cardbody" style="padding-top:16px">
+            <p class="hint" style="margin:0">Missing <code>pd_scored.csv</code> costs you the migration
+              matrix and leaves check 2 with nothing to intersect against. A file with no header row is
+              handled &mdash; it is mapped by column position on the next step.</p>
+          </div>
+        </div>
+
+        <div class="card" id="help-mapping">
+          <div class="cardhead">
+            <span>Column mapping</span>
+            <span class="sub">only the write-off and exposure files are mapped</span>
+          </div>
+          <div class="cardbody" style="display:grid;gap:12px">
+            <p class="hint" style="margin:0">The engine's own files (<code>lgd_defaults.csv</code>,
+              <code>pd_scored.csv</code>, <code>debug.json</code>) have fixed column names and are read as
+              they are. Your two files are the ones that vary, so they are mapped:</p>
+            <div style="overflow-x:auto">
+              <table class="grid tight">
+                <thead>
+                  <tr><th>File</th><th>Field</th><th>Needed</th><th>What happens without it</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td rowspan="4"><b>Write-off</b></td><td>Loan account number</td>
+                    <td class="ok">Required</td>
+                    <td>The join key &mdash; check 1 traces every default through it, so the file cannot be
+                      loaded without one.</td></tr>
+                  <tr><td>Amount</td><td>Optional</td>
+                    <td>Write-off exposure comes out as zero.</td></tr>
+                  <tr><td>Report date</td><td>Optional</td>
+                    <td>Check 2 cannot say whether a write-off was pre-, in- or post-window; everything
+                      reads as <i>undated</i>.</td></tr>
+                  <tr><td>Customer id</td><td>Optional</td>
+                    <td>Carried into the exception CSV only; nothing matches on it.</td></tr>
+                  <tr><td rowspan="2"><b>Exposure (IFRS9)</b></td><td>Loan account number</td>
+                    <td class="ok">Required</td>
+                    <td>The join key for the IFRS9 side of check 1.</td></tr>
+                  <tr><td>Amount outstanding</td><td>Optional</td>
+                    <td>Exposure per account is left empty.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint" style="margin:0">Each field is resolved in order: an <b>exact header
+              match</b>, then a <b>mapping you saved before</b> for a file with the same set of columns,
+              then an <b>AI guess</b> with a confidence score, and failing all three it is left
+              <b>unmapped</b>. Every field is editable whichever way it was filled, and
+              <b>Reset to suggestions</b> undoes your edits.</p>
+          </div>
+        </div>
+
+        <div class="card" id="help-checks">
+          <div class="cardhead"><span>Reading the two checks</span></div>
+          <div class="cardbody" style="display:grid;gap:14px">
+            <div>
+              <b style="font-size:14px">Check 1 &mdash; default traceability</b>
+              <p class="hint" style="margin:4px 0 0">Every default in <code>lgd_defaults.csv</code> is
+                looked up, by normalised account number, in the write-off file and in the IFRS9 file. Each
+                one ends up labelled <code>Write-off + IFRS9</code>, <code>Write-off</code>,
+                <code>IFRS9</code> or <code>UNTRACED</code>. The <b>trace rate</b> is traced &divide; total
+                defaults. Alongside the count you get the exposure carried by the untraced ones, which is
+                usually the number that decides whether they matter. Untraced accounts already marked
+                <i>fully recovered</i> are called out separately &mdash; they are typically benign.</p>
+            </div>
+            <div>
+              <b style="font-size:14px">Check 2 &mdash; written off but never defaulted</b>
+              <p class="hint" style="margin:4px 0 0">Accounts in the write-off file that the engine scored
+                but never put in the default bucket. Each is classified against the engine's scoring window
+                as <code>PRE-WINDOW</code>, <code>IN WINDOW</code>, <code>POST-WINDOW</code> or
+                <code>UNDATED</code>. <b>Only the in-window ones are true exceptions</b> &mdash; a
+                pre-window write-off happened before the engine was looking, and a post-window one after.
+                The last bucket each in-window account was scored in is shown too: a cluster in bucket 4
+                usually means the hazard rates are too soft at the top of the book rather than that any
+                single account is wrong.</p>
+            </div>
+            <p class="hint" style="margin:0">Both checks are per set, and every exception is exported to CSV
+              so you can work the list outside the browser.</p>
+          </div>
+        </div>
+
+        <div class="card" id="help-matrix">
+          <div class="cardhead"><span>Reading the migration matrix</span></div>
+          <div class="cardbody" style="display:grid;gap:10px">
+            <p class="hint" style="margin:0">Rebuilt from <code>pd_scored.csv</code>, one row per
+              account-month. <b>Rows are the bucket moved from, columns the bucket moved to</b>, buckets
+              1&ndash;6. The diagonal is accounts that stayed put; everything off it moved.</p>
+            <p class="hint" style="margin:0"><b>Cells count movements, not accounts</b> &mdash; one account
+              scored across twelve months contributes twelve movements, so the totals are larger than your
+              account count and should be. Use the month selector to slice a single period, and
+              <b>Row %</b> to read a cell as "the chance of moving from this row's bucket to that column's
+              bucket" (each row sums to 100%).</p>
+            <p class="hint" style="margin:0"><b>Bucket 0 is missing on purpose.</b> Bucket 0 is default, and
+              default is check 1's territory, not a migration.</p>
+            <p class="hint" style="margin:0">The all-months matrix is validated cell-for-cell against
+              <code>CohortNlambda</code> in <code>debug.json</code>. <code>PASS</code> means the rebuild
+              agrees with the engine exactly. <code>FAIL</code> reports the largest disagreeing cell and is
+              worth chasing &mdash; it means the scored file and the engine's own accumulator tell different
+              stories. <code>N/A</code> just means <code>debug.json</code> carried no matrix to compare
+              against.</p>
+          </div>
+        </div>
+
+        <div class="card" id="help-stages">
+          <div class="cardhead">
+            <span>What the run stages mean</span>
+            <span class="sub">steps 2&ndash;7 repeat for every set</span>
+          </div>
+          <div class="cardbody" style="display:grid;gap:12px">
+            <div style="overflow-x:auto">
+              <table class="grid tight">
+                <tbody>
+                  <tr><td><b>Read the analysis folders</b></td>
+                    <td>Work out which uploaded file is playing which role.</td></tr>
+                  <tr><td><b>Load inputs</b></td>
+                    <td>Read the write-off, defaults, scored and IFRS9 files for the set.</td></tr>
+                  <tr><td><b>Check 1</b></td><td>Trace each default to the write-off or IFRS9 file.</td></tr>
+                  <tr><td><b>Migration matrix</b></td>
+                    <td>Rebuild the rating migrations from the scored file.</td></tr>
+                  <tr><td><b>Check 2</b></td>
+                    <td>Find write-offs inside the scoring window that never defaulted.</td></tr>
+                  <tr><td><b>Validate migrations</b></td>
+                    <td>Compare the rebuilt matrix against the engine's own.</td></tr>
+                  <tr><td><b>Write CSVs</b></td>
+                    <td>Export the traced, untraced and migration detail for the set.</td></tr>
+                  <tr><td><b>Build the workbook</b></td><td>Write every set into one Excel file.</td></tr>
+                  <tr><td><b>Generate AI analysis</b></td>
+                    <td>Ask the model to explain the reconciliation. Skipped when no model was chosen.</td></tr>
+                  <tr><td><b>Render the dashboard</b></td>
+                    <td>Build the interactive migration matrix and engine results.</td></tr>
+                  <tr><td><b>Write the analysis memo</b></td>
+                    <td>Turn the analysis into a Word document. Skipped when no model was chosen.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint" style="margin:0">A stage finishes as <b class="ok">done</b>, <b>skipped</b> (an
+              optional step with nothing to do), <b>warn</b> (it finished, but something was missing or did
+              not reconcile &mdash; the run carries on) or <b class="no">error</b>. A <b>warn</b> is worth
+              opening the log for; it is how a missing <code>pd_scored.csv</code> or a failed matrix
+              validation announces itself.</p>
+          </div>
+        </div>
+
+        <div class="card" id="help-outputs">
+          <div class="cardhead">
+            <span>What you get back</span>
+            <span class="sub">the Files tab of any completed run</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="grid">
+              <thead><tr><th>File</th><th>What is in it</th></tr></thead>
+              <tbody>
+                <tr><td><code>hazard_rate_reconciliation.xlsx</code></td>
+                  <td>Every set in one workbook: summary, commentary, distinct account counts, engine PD by
+                    bucket and LGD term structure, then per set the untraced list, the full defaults
+                    population, the check 2 exceptions, the total and monthly matrices and the hazard
+                    matrix.</td></tr>
+                <tr><td><code>reconciliation_dashboard.html</code></td>
+                  <td>A standalone copy of the dashboard that opens in any browser with no login &mdash;
+                    the one to send to someone who does not use this app.</td></tr>
+                <tr><td><code>analysis_memo.docx</code></td>
+                  <td>The AI write-up as a Word memo. Only produced when a model was selected.</td></tr>
+                <tr><td><code>&lt;set&gt;_untraced_defaults.csv</code></td>
+                  <td>Just the untraced ones, biggest default amount first, with cohort date, rating,
+                    last outstanding balance and recovery status.</td></tr>
+                <tr><td><code>&lt;set&gt;_traced_defaults.csv</code></td>
+                  <td>The <b>whole</b> defaults population with its trace source, the write-off and IFRS9
+                    amounts, and the difference between the modelled loss and the traced amount.</td></tr>
+                <tr><td><code>&lt;set&gt;_writeoff_not_default.csv</code></td>
+                  <td>The check 2 exceptions, each with its window classification, last scored date and
+                    last bucket.</td></tr>
+                <tr><td><code>&lt;set&gt;_migration_matrix.csv</code></td>
+                  <td>Raw counts, one row per year, month, from-bucket and to-bucket.</td></tr>
+                <tr><td><code>&lt;set&gt;_migration_monthly.csv</code></td>
+                  <td>One block per period (all months, then each month) with row totals and row
+                    percentages, ready to pivot.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="cardbody" style="padding-top:16px">
+            <p class="hint" style="margin:0">A CSV with no rows is not written at all, so a missing
+              exceptions file means there were no exceptions.</p>
+          </div>
+        </div>
+
+        <div class="card" id="help-ai">
+          <div class="cardhead"><span>AI analysis and asking about a run</span></div>
+          <div class="cardbody" style="display:grid;gap:12px">
+            <p class="hint" style="margin:0"><b>AI is entirely optional.</b> Leave the model on <i>Skip</i>
+              and the reconciliation, dashboard, workbook and CSVs are all produced exactly as they
+              otherwise would be &mdash; you simply get no written analysis and no memo. If the model is
+              unreachable mid-run the run still completes; the analysis is dropped, not the
+              reconciliation.</p>
+            <div class="reqs">
+              <div class="req">
+                <span class="ms-icon">shield</span>
+                <div><b>What is sent to the model</b>
+                  <span>Aggregates only: per-set counts and totals, the trace rate, the check 2 window
+                    split, the distinct-account counts, the 6&times;6 migration matrix and the engine's
+                    parameters. <b>No account numbers, no customer ids, no account-level rows</b> ever
+                    leave the server for analysis or chat.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">forum</span>
+                <div><b>Ask about this run</b>
+                  <span>Available on a completed run. It sees the same aggregates, so it can explain a
+                    number or compare sets, but it genuinely cannot tell you about one account. A run that
+                    had analysis is answered by the same model that wrote its memo, so the two can never
+                    contradict each other; a run that skipped analysis lets you pick a model for the
+                    conversation. Enter sends, Shift+Enter starts a new line.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">visibility</span>
+                <div><b>The one exception: column mapping</b>
+                  <span>When a column cannot be matched by its header or from a saved mapping, the header
+                    row and up to five sample rows of that file are sent so the model can guess. Those are
+                    real data rows. An exact header match or a saved mapping never reaches the
+                    model.</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="help-limits">
+          <div class="cardhead"><span>Limits, retention and your data</span></div>
+          <div class="cardbody" style="display:grid;gap:12px">
+            <div class="tiles">
+              <div class="tile"><p class="lbl">Sets per run</p><span class="num" id="help-max-sets">4</span></div>
+              <div class="tile"><p class="lbl">Files per set</p><span class="num" id="help-max-files">6</span></div>
+              <div class="tile"><p class="lbl">Upload size per set</p><span class="num" id="help-max-bytes">512 MB</span></div>
+              <div class="tile"><p class="lbl">Runs per 24 hours</p><span class="num">20</span></div>
+            </div>
+            <div class="reqs">
+              <div class="req">
+                <span class="ms-icon">schedule</span>
+                <div><b>Uploaded inputs are deleted after 30 days</b>
+                  <span>Runs, results and every generated output are kept indefinitely &mdash; only your
+                    uploaded source files are purged. Once they are gone the run still opens and its files
+                    still download, but <b>Run again</b> can no longer reuse them, so you would need to
+                    upload them afresh.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">delete</span>
+                <div><b>Deleting a run is permanent</b>
+                  <span>It removes the run, its inputs and every output &mdash; workbook, memo and
+                    exception CSVs. Download anything you still want first.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">lock</span>
+                <div><b>Runs are yours alone</b>
+                  <span>History, files and conversations are scoped to your account. Signing out also drops
+                    the short-lived cookie that lets the dashboard and downloads load.</span></div>
+              </div>
+              <div class="req">
+                <span class="ms-icon">keyboard</span>
+                <div><b>Keyboard</b>
+                  <span><b>Esc</b> closes the delete confirmation. <b>Enter</b> sends a chat message and
+                    <b>Shift+Enter</b> adds a line break.</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="help-trouble">
+          <div class="cardhead"><span>When something goes wrong</span></div>
+          <div class="cardbody reqs">
+            <div class="req">
+              <span class="ms-icon">help</span>
+              <div><b>"Check 2 skipped"</b>
+                <span>The set had no write-off file, or no scored population. Add the write-off file, or
+                  include <code>pd_scored.csv</code> in the debug upload, and run again.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">help</span>
+              <div><b>Almost everything is untraced</b>
+                <span>Usually the write-off file is missing, or its account-number column is mapped to the
+                  wrong field. Open step 2 and check the join key on both the write-off and exposure files
+                  before reading anything into the trace rate.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">help</span>
+              <div><b>Migration validation says FAIL</b>
+                <span>The matrix rebuilt from <code>pd_scored.csv</code> disagrees with the engine's own
+                  accumulated arrays. Most often the scored file and the <code>debug.json</code> came from
+                  different engine runs. Check they are from the same <code>debug.zip</code>.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">help</span>
+              <div><b>The run says Interrupted</b>
+                <span>The server restarted while it was working. Nothing is corrupted &mdash; open the run
+                  and choose <b>Run again</b>, as long as the inputs are still within their 30 days.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">help</span>
+              <div><b>A set is refused as too large</b>
+                <span>The limit is per set, not per file. Upload the extracted
+                  <code>lgd_defaults.csv</code>, <code>pd_scored.csv</code> and <code>debug.json</code>
+                  instead of a large <code>debug.zip</code>, or split the reporting dates across separate
+                  runs.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">help</span>
+              <div><b>Chat or analysis is unavailable</b>
+                <span>The model gateway is not configured on this deployment, or the run was reconciled
+                  without a model and none has been chosen for the conversation. Everything except the
+                  written analysis works regardless.</span></div>
+            </div>
+            <div class="req">
+              <span class="ms-icon">help</span>
+              <div><b>"Your session expired"</b>
+                <span>Sign in again. A run already on the server keeps going without you and will be
+                  waiting on <b>My runs</b>.</span></div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </section>
 

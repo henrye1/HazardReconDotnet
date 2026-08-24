@@ -71,6 +71,7 @@ function startSession() {
     .then(({ j }) => {
       const cfg = j || {};
       if (cfg.maxBytesPerSet) MAX_SET_BYTES = cfg.maxBytesPerSet;
+      showLimits(cfg);
       SB = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       return SB.auth.getSession();
     })
@@ -132,16 +133,19 @@ $("#btn-signout").addEventListener("click", () => {
 startSession();
 
 /* ---------- screens ---------- */
-/* Two screens share one page: the run list and the new-run wizard. Nothing is
-   fetched on switching - the wizard keeps whatever state it already had, so
-   flipping to the list mid-run and back does not lose the progress log. */
+/* Four screens share one page: the run list, the new-run wizard, a run's detail
+   and the help page. Nothing is fetched on switching - the wizard keeps whatever
+   state it already had, so flipping away mid-run and back does not lose the
+   progress log. */
 function showScreen(name) {
-  ["runs", "wizard", "detail"].forEach(s =>
+  ["runs", "wizard", "detail", "help"].forEach(s =>
     $("#screen-" + s).classList.toggle("hide", s !== name));
 
-  // the detail screen belongs to a run, so the run list stays the active nav item
-  $("#nav-runs").classList.toggle("on", name !== "wizard");
+  // the detail screen belongs to a run, so the run list stays the active nav
+  // item there - but help is a destination of its own and owns the highlight
+  $("#nav-runs").classList.toggle("on", name === "runs" || name === "detail");
   $("#nav-new").classList.toggle("on", name === "wizard");
+  $("#nav-help").classList.toggle("on", name === "help");
 
   // leaving a run behind closes its conversation
   if (name !== "detail") setChatOpen(false);
@@ -177,6 +181,17 @@ function resetWizard() {
   setStep(0);
   $("#chat-log").innerHTML = "";
   showScreen("wizard");
+}
+
+/* The help page quotes the upload limits, and a quoted limit that disagrees with
+   the one actually enforced is worse than quoting none - so they are written from
+   /api/config rather than typed into the page. The markup carries the built-in
+   defaults, which only stand until config answers. */
+function showLimits(cfg) {
+  const c = cfg || {};
+  if (c.maxSets) $("#help-max-sets").textContent = String(c.maxSets);
+  if (c.maxFilesPerSet) $("#help-max-files").textContent = String(c.maxFilesPerSet);
+  $("#help-max-bytes").textContent = Math.round(MAX_SET_BYTES / (1024 * 1024)) + " MB";
 }
 
 /* Shows who is signed in, from the session rather than a second lookup. */
@@ -248,6 +263,9 @@ $("#run-search").addEventListener("input", () => {
 
 $("#nav-runs").addEventListener("click", () => showScreen("runs"));
 $("#nav-new").addEventListener("click", resetWizard);
+// Help is a read-only page, so it never disturbs a wizard part-way through: the
+// step, the picked files and a run in flight are all still there on the way back.
+$("#nav-help").addEventListener("click", () => showScreen("help"));
 $("#btn-new-run").addEventListener("click", resetWizard);
 $("#btn-cancel").addEventListener("click", () => showScreen("runs"));
 
