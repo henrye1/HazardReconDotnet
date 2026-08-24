@@ -261,8 +261,15 @@ tr.clickable:hover .rowgo{color:var(--cl-action-color)}
 /* ---------- step rail ---------- */
 /* the white band spans the page; the steps themselves are centred within it */
 .rail{padding:22px 40px;background:#fff;border-bottom:1px solid var(--cl-border-color)}
-.railinner{max-width:1000px;margin:0 auto;display:flex;align-items:center;flex-wrap:wrap}
-.railinner .st{display:flex;align-items:center;flex:1;min-width:170px}
+.railinner{max-width:1180px;margin:0 auto;display:flex;align-items:center;flex-wrap:nowrap}
+/* Six steps did not fit at the old 1000px cap, and wrapping one onto a second
+   row leaves the step before it trailing a connector into nothing. So: never
+   wrap, and let the row give way in the order that costs least - the connectors
+   shrink first, then the captions go (see the media query below), and only on a
+   genuinely narrow window do the names themselves ellipsize. min-width:0 is what
+   allows a flex item to shrink below its content at all; the old 170px floor is
+   what forced the wrap. */
+.railinner .st{display:flex;align-items:center;flex:1 1 auto;min-width:0}
 /* the step itself is the control; the connector stays outside it so the button
    holds only phrasing content */
 .railinner .stbtn{
@@ -274,18 +281,39 @@ tr.clickable:hover .rowgo{color:var(--cl-action-color)}
 /* only the label reacts: the number keeps its own state colour */
 .railinner .st.nav .stbtn:hover .tx b{color:var(--cl-primary-color)}
 .railinner .st .n{
-  width:44px;height:44px;flex:none;display:grid;place-items:center;
+  width:40px;height:40px;flex:none;display:grid;place-items:center;
   font-size:15px;font-weight:700;background:var(--cl-primary-50);color:var(--cl-primary-color);
 }
 .railinner .st.on .n{background:var(--cl-primary-color);color:#fff}
 .railinner .st.was .n{background:var(--cl-action-color);color:#fff}
 .railinner .st .tx{display:grid;gap:2px;min-width:0}
-/* stated rather than inherited: a step that cannot be clicked is a disabled
-   button, and the browser would grey its label - including the current step's */
-.railinner .st .tx b{font-size:14px;font-weight:700;white-space:nowrap;color:var(--cl-text-color)}
-.railinner .st .tx span{font-size:12px;color:var(--cl-off-text-color);white-space:nowrap}
-.railinner .st .line{flex:1;height:2px;background:var(--cl-border-color);margin:0 16px;min-width:20px}
+/* The colour is stated rather than inherited: a step that cannot be clicked is a
+   disabled button, and the browser would grey its label - including the current
+   step's. nowrap keeps each label on one line, and the ellipsis is what a
+   squeezed row does instead of spilling its text over the next step. */
+.railinner .st .tx b{
+  font-size:14px;font-weight:700;white-space:nowrap;color:var(--cl-text-color);
+  overflow:hidden;text-overflow:ellipsis;
+}
+.railinner .st .tx span{
+  font-size:12px;color:var(--cl-off-text-color);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+}
+.railinner .st .line{flex:1 1 auto;height:2px;background:var(--cl-border-color);margin:0 12px;min-width:10px}
 .railinner .st:last-child .line{display:none}
+/* Before the labels have to start truncating, give up the captions instead: the
+   step names alone still say where you are, and they are the part being read.
+   The number is measured, not guessed. With the 250px sidebar and the rail's own
+   padding, six steps hold their full labels down to a viewport of ~1340 - the
+   connectors having shrunk to their 10px minimum by then - and start ellipsing
+   just below that. The breakpoint sits at 1400 rather than 1340 so the decision
+   does not turn on a couple of pixels: label widths move with the font, and
+   Source Sans Pro is loaded from Google, so a slow or blocked font request
+   changes the metrics. Re-measure if a step is added or renamed, or the sidebar
+   changes width. */
+@media (max-width:1400px){
+  .railinner .st .tx span{display:none}
+}
 
 /* ---------- controls ---------- */
 .row{display:flex;gap:10px;flex-wrap:wrap}
