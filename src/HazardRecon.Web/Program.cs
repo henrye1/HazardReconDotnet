@@ -160,6 +160,15 @@ catch (Exception ex)
 const int RunsPerDay = 20;
 
 /// <summary>
+/// The saved-mapping store still speaks one column per field; the resolver speaks
+/// lists, because an age analysis maps several aging columns to one field. Bridged
+/// here until the store itself carries lists.
+/// </summary>
+static IReadOnlyDictionary<string, IReadOnlyList<string>> AsColumnLists(
+    IReadOnlyDictionary<string, string> mapping) =>
+    mapping.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)new[] { kv.Value });
+
+/// <summary>
 /// Long enough for "June 2026 retail book, revised write-off export" and short
 /// enough that a run list stays readable. The name input carries the same
 /// maxlength, so a longer one only ever reaches here from a non-browser client.
@@ -356,7 +365,8 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
             await columnMappingStore.GetSavedMappingAsync(userId.Value, "exposure", exposureSignature);
 
         IReadOnlyList<ResolvedField> exposureFields =
-            columnMapper.Resolve(exposureSniff.Headers, exposureSniff.SampleRows, MappableFields.Exposure, savedExposure);
+            columnMapper.Resolve(exposureSniff.Headers, exposureSniff.SampleRows, MappableFields.Exposure,
+                AsColumnLists(savedExposure));
 
         object FileView(CsvSniff sniff, IReadOnlyList<MappingFieldSpec> specs, IReadOnlyList<ResolvedField> resolved) => new
         {
@@ -377,7 +387,8 @@ app.MapPost("/api/discover", async (HttpContext ctx) =>
             IReadOnlyDictionary<string, string> savedWriteoff =
                 await columnMappingStore.GetSavedMappingAsync(userId.Value, "writeoff", writeoffSignature);
             IReadOnlyList<ResolvedField> writeoffFields =
-                columnMapper.Resolve(writeoffSniff.Headers, writeoffSniff.SampleRows, MappableFields.Writeoff, savedWriteoff);
+                columnMapper.Resolve(writeoffSniff.Headers, writeoffSniff.SampleRows, MappableFields.Writeoff,
+                    AsColumnLists(savedWriteoff));
 
             writeoffView = FileView(writeoffSniff, MappableFields.Writeoff, writeoffFields);
         }

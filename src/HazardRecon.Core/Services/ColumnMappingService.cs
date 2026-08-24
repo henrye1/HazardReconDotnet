@@ -8,10 +8,24 @@ namespace HazardRecon.Core.Services;
 public record MappingGuess(string? Column, double? Confidence);
 
 /// <summary>
-/// One field resolved to a column (or not). Source is "header_match", "saved",
-/// "ai_guess" or "unmapped", in the order those are tried.
+/// One field resolved to its columns (or to none). Source is "header_match",
+/// "saved", "ai_guess" or "unmapped", in the order those are tried.
+///
+/// Nearly every field resolves to exactly one column, which is what
+/// <see cref="Column"/> is for; only the age analysis' aging buckets carry
+/// several.
 /// </summary>
-public record ResolvedField(string Field, string? Column, double? Confidence, string Source);
+public record ResolvedField(string Field, IReadOnlyList<string> Columns, double? Confidence, string Source)
+{
+    public string? Column => Columns.Count > 0 ? Columns[0] : null;
+
+    /// <summary>The single-column case, which is every field but the aging buckets.</summary>
+    public static ResolvedField One(string field, string column, double? confidence, string source) =>
+        new(field, new[] { column }, confidence, source);
+
+    public static ResolvedField None(string field) =>
+        new(field, Array.Empty<string>(), null, "unmapped");
+}
 
 /// <summary>
 /// Resolves each mappable field to a column in an uploaded file: an exact
@@ -49,7 +63,7 @@ plausibly matches a field, omit that field entirely. Example shape:
         IReadOnlyList<string>? headers,
         IReadOnlyList<IReadOnlyList<string>> sampleRows,
         IReadOnlyList<MappingFieldSpec> fields,
-        IReadOnlyDictionary<string, string>? savedMapping,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? savedMapping,
         Action<string, string>? log = null)
     {
         List<ResolvedField> resolved = new();
@@ -57,16 +71,33 @@ plausibly matches a field, omit that field entirely. Example shape:
 
         foreach (MappingFieldSpec field in fields)
         {
-            string? exact = headers?.FirstOrDefault(h => string.Equals(h, field.Field, StringComparison.OrdinalIgnoreCase));
-            if (exact != null)
+            // a multi-valued field is not looked for by name: no column is called
+            // "AgingBuckets", and matching one that happened to be would be worse
+            // than finding nothing
+            if (!field.Multiple)
             {
-                resolved.Add(new ResolvedField(field.Field, exact, null, "header_match"));
+                string? exact = headers?.FirstOrDefault(h => string.Equals(h, field.Field, StringComparison.OrdinalIgnoreCase));
+                if (exact != null)
+                {
+                    resolved.Add(ResolvedField.One(field.Field, exact, null, "header_match"));
+                    continue;
+                }
+            }
+
+            if (savedMapping != null && savedMapping.TryGetValue(field.Field, out IReadOnlyList<string>? savedColumns)
+                && savedColumns.Count > 0)
+            {
+                resolved.Add(new ResolvedField(field.Field, savedColumns, null, "saved"));
                 continue;
             }
 
-            if (savedMapping != null && savedMapping.TryGetValue(field.Field, out string? savedColumn))
+            // Never guessed. Which aging buckets count as defaulted is a business
+            // rule the model cannot know, and a confident-looking guess is worse
+            // than none: the user would accept it and the exposure figure would
+            // quietly change. Saved-or-unmapped is the whole ladder here.
+            if (field.Multiple)
             {
-                resolved.Add(new ResolvedField(field.Field, savedColumn, null, "saved"));
+                resolved.Add(ResolvedField.None(field.Field));
                 continue;
             }
 
@@ -79,8 +110,8 @@ plausibly matches a field, omit that field entirely. Example shape:
             foreach (MappingFieldSpec field in needsGuess)
             {
                 resolved.Add(guesses.TryGetValue(field.Field, out MappingGuess? g) && g.Column != null
-                    ? new ResolvedField(field.Field, g.Column, g.Confidence, "ai_guess")
-                    : new ResolvedField(field.Field, null, null, "unmapped"));
+                    ? ResolvedField.One(field.Field, g.Column, g.Confidence, "ai_guess")
+                    : ResolvedField.None(field.Field));
             }
         }
 

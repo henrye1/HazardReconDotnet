@@ -251,7 +251,12 @@ public class ReconciliationEngine
                 return (agg, accts,
                     _dataLoaders.LoadScenario(setInfo.Scenario, setInfo.DebugJson, log),
                     _dataLoaders.LoadDefaults(setInfo.LgdDefaults, log, runType),
-                    _dataLoaders.LoadSourceAccounts(setInfo.Ifrs9, "LoanAccountNumber", $"{key} IFRS9", "AmountOutstanding", log, setMaps?.Exposure));
+                    // the exposure slot holds an age analysis for a receivables
+                    // book: one row per transaction, and the exposure is whichever
+                    // aging buckets the user said count as defaulted
+                    runType == EngineRunType.TradeReceivables
+                        ? _dataLoaders.LoadAgeAnalysis(setInfo.Ifrs9, $"{key} age analysis", log, setMaps?.Exposure)
+                        : _dataLoaders.LoadSourceAccounts(setInfo.Ifrs9, "LoanAccountNumber", $"{key} IFRS9", "AmountOutstanding", log, setMaps?.Exposure));
             });
 
             var (full, untraced, summary) = stages.Track(StageKeys.Check1(key), () =>

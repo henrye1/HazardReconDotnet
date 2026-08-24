@@ -31,7 +31,11 @@ public class ColumnMappingServiceTests
     {
         FakeLlmClient client = new();
         ColumnMappingService service = new(client, "model-1");
-        var saved = new Dictionary<string, string> { ["LoanAccountNumber"] = "Column 1", ["AmountOutstanding"] = "Column 3" };
+        var saved = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["LoanAccountNumber"] = new[] { "Column 1" },
+            ["AmountOutstanding"] = new[] { "Column 3" }
+        };
 
         var resolved = service.Resolve(
             headers: null,
@@ -41,6 +45,51 @@ public class ColumnMappingServiceTests
 
         Assert.All(resolved, r => Assert.Equal("saved", r.Source));
         Assert.Equal(0, client.ChatCalls);
+    }
+
+    /// <summary>
+    /// Which aging buckets count as defaulted is a business rule, not a column
+    /// name the model can recognise - so it is never asked, and a wrong-but-
+    /// confident answer can never reach the user.
+    /// </summary>
+    [Fact]
+    public void TestAMultiValuedFieldIsNeverSentToTheAi()
+    {
+        FakeLlmClient client = new() { ReplyContent = """{"AgingBuckets":{"column":"Current","confidence":0.95}}""" };
+        ColumnMappingService service = new(client, "model-1");
+
+        var resolved = service.Resolve(
+            headers: new[] { "Acct", "Txn", "Current", "90 Days" },
+            sampleRows: new List<IReadOnlyList<string>> { new[] { "A1", "T1", "10", "20" } },
+            fields: MappableFields.AgeAnalysis,
+            savedMapping: null);
+
+        ResolvedField buckets = resolved.Single(r => r.Field == "AgingBuckets");
+        Assert.Equal("unmapped", buckets.Source);
+        Assert.Empty(buckets.Columns);
+
+        // the account and transaction columns are still guessed as usual
+        Assert.Equal(1, client.ChatCalls);
+    }
+
+    [Fact]
+    public void TestASavedBucketSelectionComesBackInOrder()
+    {
+        ColumnMappingService service = new(null, null);
+        var saved = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["AgingBuckets"] = new[] { "60 Days", "90 Days" }
+        };
+
+        var resolved = service.Resolve(
+            headers: new[] { "Acct", "Txn", "Current", "60 Days", "90 Days" },
+            sampleRows: new List<IReadOnlyList<string>> { new[] { "A1", "T1", "1", "2", "3" } },
+            fields: MappableFields.AgeAnalysis,
+            savedMapping: saved);
+
+        ResolvedField buckets = resolved.Single(r => r.Field == "AgingBuckets");
+        Assert.Equal("saved", buckets.Source);
+        Assert.Equal(new[] { "60 Days", "90 Days" }, buckets.Columns);
     }
 
     [Fact]

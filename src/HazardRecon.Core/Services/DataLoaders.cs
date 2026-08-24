@@ -441,6 +441,135 @@ public class DataLoaders
         return res;
     }
 
+    /// <summary>
+    /// A trade receivables age analysis: one row per transaction, with the balance
+    /// spread across aging buckets. Returns the same shape as
+    /// <see cref="LoadSourceAccounts"/> so everything downstream is unaware, but the
+    /// key is (account, transaction) and the amount is the sum of whichever buckets
+    /// the user said count as defaulted.
+    ///
+    /// Its own method rather than more optional parameters on LoadSourceAccounts:
+    /// that one is the generic "account column and maybe one amount" reader, and
+    /// this has a required second key part and N amount columns.
+    /// </summary>
+    public SourceAccountsResult LoadAgeAnalysis(
+        string? path, string label, Action<string, string>? log = null, ColumnMap? columnMap = null)
+    {
+        SourceAccountsResult res = new();
+
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        {
+            log?.Invoke($"{label}: file MISSING", LogKind.Warn);
+            return res;
+        }
+
+        bool hasHeaders = columnMap?.HasHeaders ?? true;
+        using var reader = new StreamReader(path);
+        using var csv = new CsvReader(reader, ConfigFor(hasHeaders));
+
+        if (hasHeaders)
+        {
+            csv.Read();
+            csv.ReadHeader();
+        }
+
+        // hoisted: resolving these per row would repeat the dictionary lookups for
+        // every line of what is the largest file in a set
+        string acctCol = columnMap?.Resolve("LoanAccountNumber") ?? "LoanAccountNumber";
+        string txnCol = columnMap?.Resolve("TransactionNumber") ?? "TransactionNumber";
+        string[] bucketCols = (columnMap?.ResolveAll("AgingBuckets") ?? Array.Empty<string>()).ToArray();
+
+        // Not a warning: with nothing selected every row sums to zero, check 1 still
+        // "traces" every default to a zero exposure, and the run reports figures
+        // that look real. There is no sensible default for which buckets mean
+        // default, so refusing is the only honest answer.
+        if (bucketCols.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"{Path.GetFileName(path)}: no aging bucket columns were selected, so there is no " +
+                "exposure to sum. Choose at least one aging column for this file and run it again.");
+        }
+
+        // An account number that is also summed as a bucket would silently become
+        // the exposure - and account numbers are numeric here, so it would parse
+        // cleanly into a large, plausible, wrong figure.
+        string[] keyCols = bucketCols.Where(c => c == acctCol || c == txnCol).ToArray();
+        if (keyCols.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"{Path.GetFileName(path)}: {string.Join(", ", keyCols)} is mapped both as part of the " +
+                "join key and as an aging bucket. Pick different columns and run it again.");
+        }
+
+        CsvGuards.RequireColumn(csv, hasHeaders, acctCol, $"{label} account number", path);
+        CsvGuards.RequireColumn(csv, hasHeaders, txnCol, $"{label} transaction number", path);
+
+        // every bucket, not just the first: one the file has lost would otherwise
+        // contribute zero and understate the exposure without a word
+        foreach (string bucket in bucketCols)
+            CsvGuards.RequireColumn(csv, hasHeaders, bucket, $"{label} aging bucket", path);
+
+        Dictionary<string, int> unparseable = new();
+        int negativeRows = 0;
+
+        while (csv.Read())
+        {
+            res.TotalRows++;
+
+            string acct = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, acctCol));
+            if (string.IsNullOrEmpty(acct)) continue;
+
+            string txn = AccountUtils.NormaliseAccount(Field(csv, hasHeaders, txnCol));
+            string key = AccountUtils.CompositeKey(acct, txn);
+
+            res.AccountNumbers.Add(key);
+
+            double rowTotal = 0.0;
+            foreach (string bucket in bucketCols)
+            {
+                string? raw = Field(csv, hasHeaders, bucket);
+                if (string.IsNullOrWhiteSpace(raw)) continue;
+
+                if (TryParseAmount(raw, out double val)) rowTotal += val;
+                else unparseable[bucket] = unparseable.GetValueOrDefault(bucket) + 1;
+            }
+
+            if (rowTotal < 0) negativeRows++;
+
+            // accumulate rather than assign: an age analysis can carry more than one
+            // row for the same transaction
+            res.AmountsPerAccount[key] = res.AmountsPerAccount.GetValueOrDefault(key, 0.0) + rowTotal;
+        }
+
+        CsvGuards.RequireAnyAccounts(res.TotalRows, res.AccountNumbers.Count, acctCol, path);
+
+        // named per column, because summing six buckets gives six independent
+        // chances for a format this reader cannot read
+        foreach ((string bucket, int count) in unparseable)
+            log?.Invoke($"{label}: {count:N0} row(s) had an unreadable value in \"{bucket}\" - counted as zero", LogKind.Warn);
+
+        // a credit sitting in a selected bucket reduces the defaulted exposure, and
+        // "(1,234.56)" parses as negative, so this is worth saying out loud
+        if (negativeRows > 0)
+            log?.Invoke($"{label}: {negativeRows:N0} row(s) summed to a negative exposure across the selected buckets", LogKind.Warn);
+
+        log?.Invoke(
+            $"{label}: {res.AccountNumbers.Count:N0} distinct account/transaction pairs from {res.TotalRows:N0} rows, " +
+            $"summing {bucketCols.Length} aging bucket(s) ({string.Join(" + ", bucketCols)})", LogKind.Ok);
+
+        return res;
+    }
+
+    /// <summary>
+    /// Amounts arrive space-separated in this part of the world ("1 234.56"), which
+    /// NumberStyles.Any does not handle - ColumnSignature already strips spaces for
+    /// the same reason. Without this a whole aging column reads as zero.
+    /// </summary>
+    private static bool TryParseAmount(string raw, out double value) =>
+        double.TryParse(
+            raw.Replace(" ", "").Replace("\u00A0", ""),
+            NumberStyles.Any, CultureInfo.InvariantCulture, out value);
+
     private class RawLgdRow
     {
         public string RawAccountNumber { get; set; } = string.Empty;
