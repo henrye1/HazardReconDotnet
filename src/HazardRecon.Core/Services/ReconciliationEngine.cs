@@ -26,9 +26,16 @@ public class ReconciliationEngine
 
         foreach (DefaultAccountRecord d in defaults)
         {
+            // The write-off file has no transaction number, so its collections are
+            // keyed by account alone. On a lending key AccountPartOf is the identity
+            // function, which is why this needs no run-type branch - and why the
+            // trade receivables case cannot silently trace 0% through write-off.
+            string acctPart = AccountUtils.AccountPartOf(d.AccountNormalized);
+
             DefaultAccountRecord rec = new()
             {
                 AccountNumber = d.AccountNumber,
+                TransactionNumber = d.TransactionNumber,
                 AccountNormalized = d.AccountNormalized,
                 CohortDate = d.CohortDate,
                 Rating = d.Rating,
@@ -38,7 +45,9 @@ public class ReconciliationEngine
                 LastOutstanding = d.LastOutstanding,
                 RecoveredAmount = d.RecoveredAmount,
                 RecoveryStatus = d.RecoveryStatus,
-                InWriteOff = woAccts.Contains(d.AccountNormalized),
+                InWriteOff = woAccts.Contains(acctPart),
+                // the exposure side carries the transaction number, so it is
+                // compared at the full join grain
                 InIFRS9 = ifrs9Accts.Contains(d.AccountNormalized)
             };
 
@@ -47,7 +56,7 @@ public class ReconciliationEngine
             else if (rec.InIFRS9) rec.TraceSource = "IFRS9";
             else rec.TraceSource = "UNTRACED";
 
-            if (woAmtMap.TryGetValue(rec.AccountNormalized, out double woVal)) rec.WriteOffAmount = woVal;
+            if (woAmtMap.TryGetValue(acctPart, out double woVal)) rec.WriteOffAmount = woVal;
             if (ifrs9Amounts.TryGetValue(rec.AccountNormalized, out double ifrs9Val)) rec.Ifrs9AmountOutstanding = ifrs9Val;
 
             if (rec.InWriteOff) rec.TraceAmount = rec.WriteOffAmount;
@@ -163,7 +172,8 @@ public class ReconciliationEngine
         object root, string outdir = "output", Action<string, string>? logger = null,
         bool analyze = false, AiAnalysisService? analyst = null, StageReporter? stages = null,
         IReadOnlyDictionary<string, SetColumnMaps>? columnMaps = null,
-        IReadOnlyDictionary<string, SetIdentity>? setIdentities = null)
+        IReadOnlyDictionary<string, SetIdentity>? setIdentities = null,
+        EngineRunType runType = EngineRunType.Lending)
     {
         Directory.CreateDirectory(outdir);
         Action<string, string> log = (msg, kind) =>
@@ -240,7 +250,7 @@ public class ReconciliationEngine
                 var (agg, accts) = GetWoFor(setInfo, setMaps?.WriteOff);
                 return (agg, accts,
                     _dataLoaders.LoadScenario(setInfo.Scenario, setInfo.DebugJson, log),
-                    _dataLoaders.LoadDefaults(setInfo.LgdDefaults, log),
+                    _dataLoaders.LoadDefaults(setInfo.LgdDefaults, log, runType),
                     _dataLoaders.LoadSourceAccounts(setInfo.Ifrs9, "LoanAccountNumber", $"{key} IFRS9", "AmountOutstanding", log, setMaps?.Exposure));
             });
 
@@ -255,7 +265,8 @@ public class ReconciliationEngine
             if (!string.IsNullOrEmpty(setInfo.PdScored))
             {
                 mig = stages.Track(StageKeys.Migrations(key), () =>
-                    _matrixBuilder.BuildMigrationMatrix(setInfo.PdScored, woAccts, log));
+                    // woAccts is account grain, which is what detailFor expects
+                    _matrixBuilder.BuildMigrationMatrix(setInfo.PdScored, woAccts, log, runType));
             }
             else
             {
@@ -266,13 +277,23 @@ public class ReconciliationEngine
                 stages.End(StageKeys.Migrations(key), StageStatus.Warn);
             }
 
+            // two grains, deliberately: the census and the exposure intersections
+            // work at join grain, check 2 at account grain
             HashSet<string> scored = mig.ScoredAccts;
+            HashSet<string> scoredAccounts = mig.ScoredAccounts;
+
+            // projected once, here - doing it inside check 2's candidate filter
+            // would allocate per write-off row and, at 100k rows, show up in
+            // Check2ScaleTests
+            HashSet<string> defaultAccounts = defaults
+                .Select(d => AccountUtils.AccountPartOf(d.AccountNormalized))
+                .ToHashSet();
 
             DateTime? pdMin = engine.Params.TryGetValue("PdMinDate", out object? pMinObj) && DateTime.TryParse(pMinObj?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime pMin) ? pMin : null;
             DateTime? pdMax = engine.Params.TryGetValue("PdMaxDate", out object? pMaxObj) && DateTime.TryParse(pMaxObj?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime pMax) ? pMax : null;
 
             var (woNd, woSum) = stages.Track(StageKeys.Check2(key), () =>
-                ReconcileWriteoffNotDefault(scored, woAgg, defaults.Select(d => d.AccountNormalized).ToHashSet(), (pdMin, pdMax), mig.LastRating, log));
+                ReconcileWriteoffNotDefault(scoredAccounts, woAgg, defaultAccounts, (pdMin, pdMax), mig.LastRating, log));
 
             // Merge Check 2 summary properties into main summary
             summary.WoNotDefaultTotal = woSum.WoNotDefaultTotal;

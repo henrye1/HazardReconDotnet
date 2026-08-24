@@ -30,39 +30,6 @@ public class DataLoaders
             ? csv.GetField(sourceColumn)
             : (int.TryParse(sourceColumn, out int idx) ? csv.GetField(idx) : csv.GetField(sourceColumn));
 
-    /// <summary>
-    /// A column this file does not have, named before a single row is read. Missing
-    /// fields are configured to return null rather than throw, so without this the
-    /// account column resolving to nothing reads as a file of no accounts - which
-    /// traces no defaults and reports a clean 0%, a plausible figure that is really
-    /// a mapping failure. Only meaningful for a headered file; a positional map is
-    /// caught by <see cref="RequireAnyAccounts"/> once the rows have been read.
-    /// </summary>
-    private static void RequireColumn(CsvReader csv, bool hasHeaders, string sourceColumn, string field, string path)
-    {
-        if (!hasHeaders || csv.HeaderRecord == null) return;
-        if (csv.HeaderRecord.Contains(sourceColumn)) return;
-
-        throw new InvalidOperationException(
-            $"{Path.GetFileName(path)}: {field} is mapped to the column \"{sourceColumn}\", " +
-            $"which this file does not have. Its columns are: {string.Join(", ", csv.HeaderRecord)}. " +
-            "Map the columns for this file and run it again.");
-    }
-
-    /// <summary>
-    /// The backstop for everything <see cref="RequireColumn"/> cannot see: a
-    /// positional map pointing past the last column, or a column that is present
-    /// but blank on every row. A file with rows but not one account number in it
-    /// cannot reconcile anything, so it is refused rather than counted as empty.
-    /// </summary>
-    private static void RequireAnyAccounts(int dataRows, int accountsFound, string sourceColumn, string path)
-    {
-        if (dataRows == 0 || accountsFound > 0) return;
-
-        throw new InvalidOperationException(
-            $"{Path.GetFileName(path)}: none of its {dataRows:N0} rows had an account number in \"{sourceColumn}\". " +
-            "Check the column mapping for this file and run it again.");
-    }
 
     public EngineScenario LoadScenario(string? scenarioPath, string? debugJsonPath, Action<string, string>? log = null)
     {
@@ -180,7 +147,14 @@ public class DataLoaders
         return matrix;
     }
 
-    public List<DefaultAccountRecord> LoadDefaults(string lgdPath, Action<string, string>? log = null)
+    /// <param name="runType">
+    /// Trade receivables keys a default on (account, client) rather than on the
+    /// account alone, because one account holds many transactions and each is a
+    /// debt in its own right.
+    /// </param>
+    public List<DefaultAccountRecord> LoadDefaults(
+        string lgdPath, Action<string, string>? log = null,
+        EngineRunType runType = EngineRunType.Lending)
     {
         if (!File.Exists(lgdPath))
         {
@@ -194,11 +168,25 @@ public class DataLoaders
         csv.Read();
         csv.ReadHeader();
 
+        bool composite = runType == EngineRunType.TradeReceivables;
+
+        // Refused before a row is read, and refused rather than degraded: this
+        // config returns null for a column the file does not have, so without the
+        // guard every key would come out as "A1<sep>" and match nothing - a 0%
+        // trace rate that looks like a finding rather than a malformed export.
+        if (composite)
+            CsvGuards.RequireColumn(csv, true, "ClientNumber", "the client number", lgdPath);
+
         List<RawLgdRow> allRows = new();
         while (csv.Read())
         {
-            string acct = AccountUtils.NormaliseAccount(csv.GetField("AccountNumber"));
             string rawAcct = csv.GetField("AccountNumber") ?? string.Empty;
+            string acct = AccountUtils.NormaliseAccount(rawAcct);
+
+            // normalised the same way as the account: client numbers come out of
+            // the same float-mangling exports and carry the same trailing ".0"
+            string rawClient = composite ? (csv.GetField("ClientNumber") ?? string.Empty) : string.Empty;
+            string client = AccountUtils.NormaliseAccount(rawClient);
             string bucket = (csv.GetField("Bucket") ?? string.Empty).Trim();
             string eventType = (csv.GetField("EventType") ?? string.Empty).Trim();
             string cohortDate = csv.GetField("CohortDate") ?? string.Empty;
@@ -210,7 +198,8 @@ public class DataLoaders
             allRows.Add(new RawLgdRow
             {
                 RawAccountNumber = rawAcct,
-                AccountNormalized = acct,
+                RawClientNumber = rawClient.Trim(),
+                AccountNormalized = AccountUtils.CompositeKey(acct, client),
                 Bucket = bucket,
                 BucketN = bktN,
                 EventType = eventType,
@@ -220,7 +209,7 @@ public class DataLoaders
             });
         }
 
-        // MinLgdBalance per account across all rows
+        // MinLgdBalance per join key across all rows
         Dictionary<string, double> minLgd = allRows
             .Where(r => r.Amount.HasValue)
             .GroupBy(r => r.AccountNormalized)
@@ -230,7 +219,7 @@ public class DataLoaders
         List<RawLgdRow> traj = allRows.Where(r => string.Equals(r.EventType, "Lifetime", StringComparison.OrdinalIgnoreCase)).ToList();
         if (traj.Count == 0) traj = allRows;
 
-        // LastObservation & LastOutstanding per account (highest BucketN)
+        // LastObservation & LastOutstanding per join key (highest BucketN)
         var lastObs = traj
             .Where(r => r.BucketN.HasValue)
             .GroupBy(r => r.AccountNormalized)
@@ -239,7 +228,14 @@ public class DataLoaders
                 return (LastObsBucket: lastRow.BucketN!.Value, LastOutstanding: lastRow.Amount);
             });
 
-        // Filter Bucket == 0 defaults
+        // Filter Bucket == 0 defaults.
+        //
+        // This grouping IS the definition of "a default": one record per distinct
+        // join key, taking its largest Bucket-0 amount. For trade receivables that
+        // key is (account, client), so an account with three defaulted
+        // transactions now yields three defaults where it used to yield one. That
+        // is the intended redefinition and it moves every count and total in the
+        // summary from account grain to transaction grain.
         var bucket0Rows = allRows
             .Where(r => r.Bucket == "0")
             .GroupBy(r => r.AccountNormalized)
@@ -283,6 +279,7 @@ public class DataLoaders
             defaults.Add(new DefaultAccountRecord
             {
                 AccountNumber = d0.RawAccountNumber,
+                TransactionNumber = d0.RawClientNumber,
                 AccountNormalized = acct,
                 CohortDate = d0.CohortDate,
                 Rating = d0.Rating,
@@ -297,7 +294,7 @@ public class DataLoaders
 
         int fullyRecoveredCount = defaults.Count(d => d.RecoveryStatus == "FULLY RECOVERED");
         double totalExp = defaults.Sum(d => d.DefaultAmount);
-        log?.Invoke($"defaults: {defaults.Count:N0} distinct accounts at Bucket 0 (exposure {AccountUtils.Money(totalExp)}); {fullyRecoveredCount:N0} fully recovered post-default", LogKind.Ok);
+        log?.Invoke($"defaults: {defaults.Count:N0} distinct {runType.Noun()} at Bucket 0 (exposure {AccountUtils.Money(totalExp)}); {fullyRecoveredCount:N0} fully recovered post-default", LogKind.Ok);
 
         return defaults;
     }
@@ -327,7 +324,7 @@ public class DataLoaders
         string dateCol = columnMap?.Resolve("ReportDate") ?? "ReportDate";
 
         // the join key is not optional: check 1 traces every default through it
-        RequireColumn(csv, hasHeaders, acctCol, "the write-off account number", path);
+        CsvGuards.RequireColumn(csv, hasHeaders, acctCol, "the write-off account number", path);
 
         // the rest each cost one figure rather than the whole check, so they are
         // reported and carried on with: no date limits check 2's window, no amount
@@ -362,7 +359,7 @@ public class DataLoaders
             });
         }
 
-        RequireAnyAccounts(dataRows, rawRows.Count, acctCol, path);
+        CsvGuards.RequireAnyAccounts(dataRows, rawRows.Count, acctCol, path);
 
         List<WriteOffAggRecord> agg = rawRows
             .GroupBy(r => r.AccountNormalized)
@@ -418,7 +415,7 @@ public class DataLoaders
 
         // the account column is what the defaults are traced into, so a file that
         // does not have it cannot contribute a trace and must say so
-        RequireColumn(csv, hasHeaders, resolvedColName, $"{label} account number", path);
+        CsvGuards.RequireColumn(csv, hasHeaders, resolvedColName, $"{label} account number", path);
 
         if (resolvedAmountCol != null && !hasAmountCol)
             log?.Invoke($"{label}: no \"{resolvedAmountCol}\" column - exposure per account will be empty", LogKind.Warn);
@@ -438,7 +435,7 @@ public class DataLoaders
             }
         }
 
-        RequireAnyAccounts(res.TotalRows, res.AccountNumbers.Count, resolvedColName, path);
+        CsvGuards.RequireAnyAccounts(res.TotalRows, res.AccountNumbers.Count, resolvedColName, path);
 
         log?.Invoke($"{label}: {res.AccountNumbers.Count:N0} distinct accounts", LogKind.Ok);
         return res;
@@ -447,6 +444,7 @@ public class DataLoaders
     private class RawLgdRow
     {
         public string RawAccountNumber { get; set; } = string.Empty;
+        public string RawClientNumber { get; set; } = string.Empty;
         public string AccountNormalized { get; set; } = string.Empty;
         public string Bucket { get; set; } = string.Empty;
         public double? BucketN { get; set; }

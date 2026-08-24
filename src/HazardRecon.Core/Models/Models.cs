@@ -1,5 +1,28 @@
 namespace HazardRecon.Core.Models;
 
+/// <summary>
+/// What kind of book a run covers, for the engine's own use. Core deliberately
+/// declares this itself rather than referencing the web layer's RunTypeLookup:
+/// the CLI has no run types at all, and the engine only cares about the two
+/// behaviours, not about how a run row stores them.
+/// </summary>
+public enum EngineRunType
+{
+    Lending,
+    TradeReceivables
+}
+
+public static class EngineRunTypeGrain
+{
+    /// <summary>
+    /// What one row of the defaults, age analysis or scored population actually
+    /// counts, for log lines and report labels. One source, so the wording cannot
+    /// drift between the four places that say it.
+    /// </summary>
+    public static string Noun(this EngineRunType runType) =>
+        runType == EngineRunType.TradeReceivables ? "account/transaction pairs" : "accounts";
+}
+
 public class InventorySet
 {
     public string Folder { get; set; } = string.Empty;
@@ -30,6 +53,19 @@ public class Inventory
 public class DefaultAccountRecord
 {
     public string AccountNumber { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The transaction (client) number this default belongs to, for display and
+    /// export. Empty for a lending run, which has no second key part.
+    /// </summary>
+    public string TransactionNumber { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The join key. For trade receivables this is the composite built by
+    /// <see cref="Helpers.AccountUtils.CompositeKey"/>, not a bare account
+    /// number - use AccountPartOf before comparing it with anything read from
+    /// the write-off file, which has no transaction number.
+    /// </summary>
     public string AccountNormalized { get; set; } = string.Empty;
     public string CohortDate { get; set; } = string.Empty;
     public string Rating { get; set; } = string.Empty;
@@ -95,7 +131,22 @@ public class MigrationMatrixResult
     public int RowsTotal { get; set; }
     public int RowsInRange { get; set; }
     public int ScoredDistinct { get; set; }
+
+    /// <summary>The scored population at join grain - composite for trade receivables.</summary>
     public HashSet<string> ScoredAccts { get; set; } = new();
+
+    /// <summary>
+    /// The same population projected to account numbers. Check 2 compares the
+    /// scored population against the write-off file, which has no transaction
+    /// number, so it needs this rather than <see cref="ScoredAccts"/>.
+    /// </summary>
+    public HashSet<string> ScoredAccounts { get; set; } = new();
+
+    /// <summary>
+    /// Keyed by **account**, not by the join key: its only consumer is check 2,
+    /// which works at account grain. Keying it composite would leave every
+    /// lookup missing and silently report no last-seen bucket for anything.
+    /// </summary>
     public Dictionary<string, (string Date, string Bucket)> LastRating { get; set; } = new();
 }
 
