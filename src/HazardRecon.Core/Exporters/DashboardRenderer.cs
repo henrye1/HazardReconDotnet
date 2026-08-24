@@ -150,7 +150,11 @@ public class DashboardRenderer
 
         // Census Table
         sb.AppendLine("    <div class='card'>");
-        sb.AppendLine("      <h2>Distinct Account Census <span class='sub'>cross-file population overlap</span></h2>");
+        // a receivables run counts transactions, so the heading would otherwise
+        // name a population the figures underneath it are not
+        bool censusByTransaction = results.Values.Any(r => r.Full.Any(f => f.TransactionNumber.Length > 0));
+        string censusTitle = censusByTransaction ? "Distinct Transaction Census" : "Distinct Account Census";
+        sb.AppendLine($"      <h2>{censusTitle} <span class='sub'>cross-file population overlap</span></h2>");
         sb.AppendLine("      <table>");
         sb.AppendLine("        <thead><tr><th>Set</th><th class='num'>Scored</th><th class='num'>Defaults</th><th class='num'>Default %</th><th class='num'>Write-Off</th><th class='num'>IFRS9</th><th class='num'>Scored in WO</th><th class='num'>Scored in IFRS9</th></tr></thead>");
         sb.AppendLine("        <tbody>");
@@ -260,19 +264,28 @@ public class DashboardRenderer
             // Untraced preview
             sb.AppendLine("      <h3 style='font-size:14px; margin:12px 0 8px 0;'>Top Untraced Defaults</h3>");
             sb.AppendLine("      <table>");
-            sb.AppendLine("        <thead><tr><th>Account</th><th>Cohort Date</th><th class='num'>Rating</th><th class='num'>Default Amount</th></tr></thead>");
+            // an account holds many transactions in a receivables book, so without
+            // this the rows are indistinguishable from one another
+            bool withTransaction = r.Full.Any(f => f.TransactionNumber.Length > 0);
+            string txHead = withTransaction ? "<th>Transaction</th>" : "";
+            int untracedCols = withTransaction ? 5 : 4;
+
+            sb.AppendLine($"        <thead><tr><th>Account</th>{txHead}<th>Cohort Date</th><th class='num'>Rating</th><th class='num'>Default Amount</th></tr></thead>");
             sb.AppendLine("        <tbody>");
             var topUntraced = r.Untraced.Take(12).ToList();
             if (topUntraced.Count > 0)
             {
                 foreach (DefaultAccountRecord u in topUntraced)
                 {
-                    sb.AppendLine($"          <tr><td>{WebUtility.HtmlEncode(u.AccountNumber)}</td><td>{WebUtility.HtmlEncode(u.CohortDate)}</td><td class='num'>{WebUtility.HtmlEncode(u.Rating)}</td><td class='num'>{AccountUtils.Money(u.DefaultAmount)}</td></tr>");
+                    string txCell = withTransaction
+                        ? $"<td>{WebUtility.HtmlEncode(u.TransactionNumber)}</td>"
+                        : "";
+                    sb.AppendLine($"          <tr><td>{WebUtility.HtmlEncode(u.AccountNumber)}</td>{txCell}<td>{WebUtility.HtmlEncode(u.CohortDate)}</td><td class='num'>{WebUtility.HtmlEncode(u.Rating)}</td><td class='num'>{AccountUtils.Money(u.DefaultAmount)}</td></tr>");
                 }
             }
             else
             {
-                sb.AppendLine("          <tr><td colspan='4' class='sub'>No untraced defaults.</td></tr>");
+                sb.AppendLine($"          <tr><td colspan='{untracedCols}' class='sub'>No untraced defaults.</td></tr>");
             }
             sb.AppendLine("        </tbody>");
             sb.AppendLine("      </table>");

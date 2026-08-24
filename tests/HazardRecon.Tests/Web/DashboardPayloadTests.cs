@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HazardRecon.Core.Helpers;
 using HazardRecon.Core.Models;
 using HazardRecon.Core.Services;
 using HazardRecon.Web;
@@ -184,6 +185,36 @@ public class DashboardPayloadTests : IClassFixture<SyntheticDataFixture>
         Assert.True(d.WoExceptions.Count <= DashboardPayload.TopWoExceptionRows);
         // every exception listed is one inside the scoring window
         Assert.All(d.WoExceptions, w => Assert.Equal("IN WINDOW", w.Window));
+
+        // a lending run has no transaction to show, and the table hides the column
+        // rather than printing a row of blanks
+        Assert.All(d.TopUntraced, u => Assert.Equal("", u.Transaction));
+    }
+
+    /// <summary>
+    /// The payload the detail screen draws from carries the transaction, or a
+    /// receivables run's rows differ only by amount.
+    /// </summary>
+    [Fact]
+    public void TestAReceivablesRunCarriesTheTransactionIntoThePayload()
+    {
+        SingleSetResult set = new()
+        {
+            Summary = new ReconciliationSummary { Label = "receivables" },
+            Untraced = new List<DefaultAccountRecord>
+            {
+                new()
+                {
+                    AccountNumber = "A1", TransactionNumber = "T7",
+                    AccountNormalized = AccountUtils.CompositeKey("A1", "T7"),
+                    CohortDate = "2026-05-31", Rating = "5", DefaultAmount = 100
+                }
+            }
+        };
+
+        DashboardSet d = DashboardPayload.Build("TR", set);
+
+        Assert.Equal("T7", Assert.Single(d.TopUntraced).Transaction);
     }
 
     [Fact]

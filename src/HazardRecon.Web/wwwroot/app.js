@@ -1909,8 +1909,14 @@ function renderSetDetail(res) {
   if (!dash.length) { $("#dash-setdetail").innerHTML = ""; return; }
 
   $("#dash-setdetail").innerHTML = dash.map(d => {
+    /* Drawn when the rows actually carry a transaction, not from the run type: a
+       run stored before there was such a column has no key for it, and this way a
+       reopened lending run is right without any run-type plumbing reaching here. */
+    const hasTxn = (d.top_untraced || []).some(u => u.transaction);
+
     const untraced = (d.top_untraced || []).map(u => `<tr>
       <td class="num" style="text-align:left">${escapeHtml(u.account)}</td>
+      ${hasTxn ? `<td>${escapeHtml(u.transaction || "")}</td>` : ""}
       <td>${escapeHtml(u.cohort_date)}</td>
       <td class="num">${escapeHtml(u.rating)}</td>
       <td class="num">${escapeHtml(u.amount)}</td></tr>`).join("");
@@ -1944,7 +1950,8 @@ function renderSetDetail(res) {
         </div>
         <div class="cardbody" style="display:grid;gap:24px">
           ${block("Top untraced defaults", "",
-            `<th>Account</th><th>Cohort date</th><th class="num">Rating</th>` +
+            `<th>Account</th>${hasTxn ? "<th>Transaction</th>" : ""}` +
+            `<th>Cohort date</th><th class="num">Rating</th>` +
             `<th class="num">Default amount</th>`, untraced)}
           <div class="dashrow">
             ${buckets ? `<div class="grow1" style="display:grid;gap:10px">

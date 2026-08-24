@@ -56,10 +56,22 @@ public class ReconciliationEngine
             else if (rec.InIFRS9) rec.TraceSource = "IFRS9";
             else rec.TraceSource = "UNTRACED";
 
-            if (woAmtMap.TryGetValue(acctPart, out double woVal)) rec.WriteOffAmount = woVal;
+            // A write-off is recorded per account. When the default key carries a
+            // transaction as well, that amount belongs to the account and not to any
+            // one of its transactions - so it is held apart rather than repeated down
+            // every row, where summing the column would multiply the real write-off
+            // by the number of transactions.
+            if (woAmtMap.TryGetValue(acctPart, out double woVal))
+            {
+                if (rec.TransactionNumber.Length > 0) rec.AccountWriteOffTotal = woVal;
+                else rec.WriteOffAmount = woVal;
+            }
+
             if (ifrs9Amounts.TryGetValue(rec.AccountNormalized, out double ifrs9Val)) rec.Ifrs9AmountOutstanding = ifrs9Val;
 
-            if (rec.InWriteOff) rec.TraceAmount = rec.WriteOffAmount;
+            // the exposure side is keyed at the same grain as the default, so its
+            // figure is the per-row one whenever the write-off amount is not
+            if (rec.InWriteOff && rec.WriteOffAmount.HasValue) rec.TraceAmount = rec.WriteOffAmount;
             else if (rec.InIFRS9) rec.TraceAmount = rec.Ifrs9AmountOutstanding;
 
             if (rec.TraceAmount.HasValue) rec.LossVsTraceDiff = rec.MinLgdBalance - rec.TraceAmount.Value;

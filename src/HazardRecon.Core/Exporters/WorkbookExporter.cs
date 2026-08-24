@@ -7,6 +7,18 @@ namespace HazardRecon.Core.Exporters;
 
 public class WorkbookExporter
 {
+    /// <summary>
+    /// Whether these results count transactions rather than accounts. Read from the
+    /// rows rather than passed in, so a label can never claim a grain the data does
+    /// not have - and so no caller has to thread the run type into a report.
+    /// </summary>
+    private static bool CountsTransactions(SingleSetResult set) =>
+        set.Full.Any(f => f.TransactionNumber.Length > 0);
+
+    /// <summary>What one row counts, for labels that would otherwise say "accounts".</summary>
+    private static string Noun(SingleSetResult set) =>
+        CountsTransactions(set) ? "transaction(s)" : "account(s)";
+
     public static List<string> CommentaryLines(Dictionary<string, SingleSetResult> results)
     {
         List<string> lines = new();
@@ -24,7 +36,8 @@ public class WorkbookExporter
 
             if (untraced > 0)
             {
-                lines.Add($"{key}: {untraced:N0} default account(s) could not be traced to the write-off or IFRS9 file ({AccountUtils.Money(s.UntracedExposure)} exposure).");
+                string source = CountsTransactions(r) ? "write-off or age analysis" : "write-off or IFRS9";
+                lines.Add($"{key}: {untraced:N0} defaulted {Noun(r)} could not be traced to the {source} file ({AccountUtils.Money(s.UntracedExposure)} exposure).");
             }
 
             if (inWindow > 0)
@@ -111,13 +124,22 @@ public class WorkbookExporter
         }
 
         // 3. Distinct accounts Sheet
+        //
+        // A run covers one kind of book, so one noun serves the whole sheet. The
+        // write-off column stays "accounts" whatever the run type, because that file
+        // is per account either way - which is the point of saying so here.
+        bool censusByTransaction = results.Values.Any(CountsTransactions);
+        string censusNoun = censusByTransaction ? "transactions" : "accounts";
+
         IXLWorksheet wsCensus = wb.Worksheets.Add("Distinct accounts");
         wsCensus.Cell(1, 1).Value = "Debug set";
-        wsCensus.Cell(1, 2).Value = "Distinct scored accounts (pd_scored)";
-        wsCensus.Cell(1, 3).Value = "Distinct defaulted accounts (Bucket=0)";
+        wsCensus.Cell(1, 2).Value = $"Distinct scored {censusNoun} (pd_scored)";
+        wsCensus.Cell(1, 3).Value = $"Distinct defaulted {censusNoun} (Bucket=0)";
         wsCensus.Cell(1, 4).Value = "Defaults as % of scored";
         wsCensus.Cell(1, 5).Value = "Distinct write-off accounts";
-        wsCensus.Cell(1, 6).Value = "Distinct IFRS9 accounts";
+        wsCensus.Cell(1, 6).Value = censusByTransaction
+            ? $"Distinct age analysis {censusNoun}"
+            : "Distinct IFRS9 accounts";
         wsCensus.Cell(1, 7).Value = "Scored accts also in write-off";
         wsCensus.Cell(1, 8).Value = "Scored accts also in IFRS9";
 
@@ -186,33 +208,44 @@ public class WorkbookExporter
         // Per-set detail sheets
         foreach (var (key, r) in results)
         {
+            // Taken from the rows, so a header can never disagree with what is
+            // written under it. Only a receivables book carries a transaction
+            // number, and there every row has one.
+            bool withTransaction = r.Full.Any(f => f.TransactionNumber.Length > 0);
+
+            // an offset rather than two parallel blocks of cell numbers, which
+            // would be two sets of indices to keep in step
+            int tx = withTransaction ? 1 : 0;
+
             // Untraced
             string untracedSheetName = AccountUtils.SheetName(key, "Untraced");
             IXLWorksheet wsUntraced = wb.Worksheets.Add(untracedSheetName);
             wsUntraced.Cell(1, 1).Value = "AccountNumber";
-            wsUntraced.Cell(1, 2).Value = "CohortDate";
-            wsUntraced.Cell(1, 3).Value = "Rating";
-            wsUntraced.Cell(1, 4).Value = "DefaultAmount";
-            wsUntraced.Cell(1, 5).Value = "LastOutstanding";
-            wsUntraced.Cell(1, 6).Value = "RecoveredAmount";
-            wsUntraced.Cell(1, 7).Value = "RecoveryStatus";
+            if (withTransaction) wsUntraced.Cell(1, 2).Value = "TransactionNumber";
+            wsUntraced.Cell(1, 2 + tx).Value = "CohortDate";
+            wsUntraced.Cell(1, 3 + tx).Value = "Rating";
+            wsUntraced.Cell(1, 4 + tx).Value = "DefaultAmount";
+            wsUntraced.Cell(1, 5 + tx).Value = "LastOutstanding";
+            wsUntraced.Cell(1, 6 + tx).Value = "RecoveredAmount";
+            wsUntraced.Cell(1, 7 + tx).Value = "RecoveryStatus";
 
             int uRow = 2;
             foreach (DefaultAccountRecord u in r.Untraced)
             {
                 wsUntraced.Cell(uRow, 1).Value = u.AccountNumber;
-                wsUntraced.Cell(uRow, 2).Value = u.CohortDate;
-                wsUntraced.Cell(uRow, 3).Value = u.Rating;
-                wsUntraced.Cell(uRow, 4).Value = u.DefaultAmount;
-                wsUntraced.Cell(uRow, 5).Value = u.LastOutstanding.HasValue ? (XLCellValue)u.LastOutstanding.Value : Blank.Value;
-                wsUntraced.Cell(uRow, 6).Value = u.RecoveredAmount;
-                wsUntraced.Cell(uRow, 7).Value = u.RecoveryStatus;
+                if (withTransaction) wsUntraced.Cell(uRow, 2).Value = u.TransactionNumber;
+                wsUntraced.Cell(uRow, 2 + tx).Value = u.CohortDate;
+                wsUntraced.Cell(uRow, 3 + tx).Value = u.Rating;
+                wsUntraced.Cell(uRow, 4 + tx).Value = u.DefaultAmount;
+                wsUntraced.Cell(uRow, 5 + tx).Value = u.LastOutstanding.HasValue ? (XLCellValue)u.LastOutstanding.Value : Blank.Value;
+                wsUntraced.Cell(uRow, 6 + tx).Value = u.RecoveredAmount;
+                wsUntraced.Cell(uRow, 7 + tx).Value = u.RecoveryStatus;
 
                 if (u.RecoveryStatus == "FULLY RECOVERED")
                 {
                     wsUntraced.Row(uRow).Style.Fill.BackgroundColor = XLColor.FromHtml("E6F2EC");
-                    wsUntraced.Cell(uRow, 7).Style.Font.FontColor = XLColor.FromHtml("2E8B6B");
-                    wsUntraced.Cell(uRow, 7).Style.Font.Bold = true;
+                    wsUntraced.Cell(uRow, 7 + tx).Style.Font.FontColor = XLColor.FromHtml("2E8B6B");
+                    wsUntraced.Cell(uRow, 7 + tx).Style.Font.Bold = true;
                 }
                 uRow++;
             }
@@ -221,29 +254,44 @@ public class WorkbookExporter
             string defSheetName = AccountUtils.SheetName(key, "Defaults");
             IXLWorksheet wsDefaults = wb.Worksheets.Add(defSheetName);
             wsDefaults.Cell(1, 1).Value = "AccountNumber";
-            wsDefaults.Cell(1, 2).Value = "CohortDate";
-            wsDefaults.Cell(1, 3).Value = "Rating";
-            wsDefaults.Cell(1, 4).Value = "DefaultAmount";
-            wsDefaults.Cell(1, 5).Value = "TraceSource";
-            wsDefaults.Cell(1, 6).Value = "WriteOffAmount";
-            wsDefaults.Cell(1, 7).Value = "IFRS9AmountOutstanding";
-            wsDefaults.Cell(1, 8).Value = "MinLgdBalance";
-            wsDefaults.Cell(1, 9).Value = "TraceAmount";
-            wsDefaults.Cell(1, 10).Value = "LossVsTraceDiff";
+            if (withTransaction) wsDefaults.Cell(1, 2).Value = "TransactionNumber";
+            wsDefaults.Cell(1, 2 + tx).Value = "CohortDate";
+            wsDefaults.Cell(1, 3 + tx).Value = "Rating";
+            wsDefaults.Cell(1, 4 + tx).Value = "DefaultAmount";
+            wsDefaults.Cell(1, 5 + tx).Value = "TraceSource";
+            // replaced rather than added to: a write-off is recorded per account, so
+            // for a transaction-level row there is no per-row figure to show
+            wsDefaults.Cell(1, 6 + tx).Value = withTransaction ? "AccountWriteOffTotal" : "WriteOffAmount";
+            wsDefaults.Cell(1, 7 + tx).Value = withTransaction ? "AgeAnalysisAmount" : "IFRS9AmountOutstanding";
+            wsDefaults.Cell(1, 8 + tx).Value = "MinLgdBalance";
+            wsDefaults.Cell(1, 9 + tx).Value = "TraceAmount";
+            wsDefaults.Cell(1, 10 + tx).Value = "LossVsTraceDiff";
+
+            HashSet<string> writeOffSeen = new();
 
             int dRow = 2;
             foreach (DefaultAccountRecord f in r.Full)
             {
                 wsDefaults.Cell(dRow, 1).Value = f.AccountNumber;
-                wsDefaults.Cell(dRow, 2).Value = f.CohortDate;
-                wsDefaults.Cell(dRow, 3).Value = f.Rating;
-                wsDefaults.Cell(dRow, 4).Value = f.DefaultAmount;
-                wsDefaults.Cell(dRow, 5).Value = f.TraceSource;
-                wsDefaults.Cell(dRow, 6).Value = f.WriteOffAmount.HasValue ? (XLCellValue)f.WriteOffAmount.Value : Blank.Value;
-                wsDefaults.Cell(dRow, 7).Value = f.Ifrs9AmountOutstanding.HasValue ? (XLCellValue)f.Ifrs9AmountOutstanding.Value : Blank.Value;
-                wsDefaults.Cell(dRow, 8).Value = f.MinLgdBalance;
-                wsDefaults.Cell(dRow, 9).Value = f.TraceAmount.HasValue ? (XLCellValue)f.TraceAmount.Value : Blank.Value;
-                wsDefaults.Cell(dRow, 10).Value = f.LossVsTraceDiff.HasValue ? (XLCellValue)f.LossVsTraceDiff.Value : Blank.Value;
+                if (withTransaction) wsDefaults.Cell(dRow, 2).Value = f.TransactionNumber;
+                wsDefaults.Cell(dRow, 2 + tx).Value = f.CohortDate;
+                wsDefaults.Cell(dRow, 3 + tx).Value = f.Rating;
+                wsDefaults.Cell(dRow, 4 + tx).Value = f.DefaultAmount;
+                wsDefaults.Cell(dRow, 5 + tx).Value = f.TraceSource;
+
+                // written once per account, so totalling the column gives the real
+                // write-off rather than a multiple of it
+                double? writeOff = withTransaction
+                    ? (f.AccountWriteOffTotal.HasValue && writeOffSeen.Add(f.AccountNumber)
+                        ? f.AccountWriteOffTotal
+                        : null)
+                    : f.WriteOffAmount;
+
+                wsDefaults.Cell(dRow, 6 + tx).Value = writeOff.HasValue ? (XLCellValue)writeOff.Value : Blank.Value;
+                wsDefaults.Cell(dRow, 7 + tx).Value = f.Ifrs9AmountOutstanding.HasValue ? (XLCellValue)f.Ifrs9AmountOutstanding.Value : Blank.Value;
+                wsDefaults.Cell(dRow, 8 + tx).Value = f.MinLgdBalance;
+                wsDefaults.Cell(dRow, 9 + tx).Value = f.TraceAmount.HasValue ? (XLCellValue)f.TraceAmount.Value : Blank.Value;
+                wsDefaults.Cell(dRow, 10 + tx).Value = f.LossVsTraceDiff.HasValue ? (XLCellValue)f.LossVsTraceDiff.Value : Blank.Value;
                 dRow++;
             }
 

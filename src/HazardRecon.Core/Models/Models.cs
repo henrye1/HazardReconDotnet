@@ -82,6 +82,15 @@ public class DefaultAccountRecord
     public bool Traced => InWriteOff || InIFRS9;
     public string TraceSource { get; set; } = "UNTRACED";
     public double? WriteOffAmount { get; set; }
+
+    /// <summary>
+    /// The account's whole write-off, for a key that identifies a transaction
+    /// rather than an account. Kept apart from <see cref="WriteOffAmount"/>
+    /// precisely so it is never read as this row's share: the exporters write it
+    /// once per account, so the column still totals correctly.
+    /// </summary>
+    public double? AccountWriteOffTotal { get; set; }
+
     public double? Ifrs9AmountOutstanding { get; set; }
     public double? TraceAmount { get; set; }
     public double? LossVsTraceDiff { get; set; }
